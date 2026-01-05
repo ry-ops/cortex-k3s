@@ -1,0 +1,304 @@
+apiVersion: v1
+data:
+  complete-tools-list.txt: |-
+    COMPLETE LIST OF 17 CORTEX ORCHESTRATOR TOOLS
+
+    Infrastructure Query (3):
+    1. kubectl - Execute K8s commands
+    2. get_infrastructure_summary - Comprehensive system overview
+    3. proxmox_query - Proxmox VM/container queries
+
+    UniFi Network (3):
+    4. unifi_list_active_clients - List connected clients
+    5. unifi_get_device_health - Device health status
+    6. unifi_get_client_activity - Client activity analytics
+
+    Sandfly Security (6):
+    7. sandfly_query - General security querying
+    8. sandfly_get_alerts - Alert retrieval
+    9. sandfly_get_hosts - Monitored hosts list
+    10. sandfly_get_processes - Process list per host
+    11. sandfly_trigger_scan - On-demand scans
+    12. sandfly_query_docs - Documentation lookup
+
+    Cortex Task Management (4):
+    13. cortex_create_task - Create new task
+    14. cortex_get_tasks - List all tasks
+    15. cortex_get_task_status - Check task status
+    16. cortex_get_metrics - System metrics
+
+    Cortex Agent Management (1):
+    17. cortex_list_agents - List active agents
+
+    ACCESS: https://chat.ry-ops.dev
+    PROTOCOL: Natural language conversation
+    BACKEND: Cortex Orchestrator (cortex namespace)
+    QUEUING: Redis priority queues
+    THROTTLE: 28,000 tokens/minute global limit
+  tools-catalog.md: |
+    # Cortex Orchestrator - Complete Tools Catalog
+
+    **Discovered**: 2026-01-05
+    **Total Tools**: 17
+    **Available Via**: https://chat.ry-ops.dev
+
+    ## Tool Categories
+
+    ### Infrastructure Query Tools (3 tools)
+
+    #### 1. kubectl
+    **Purpose**: Execute kubectl commands to query K8s cluster
+    **Use Cases**:
+    - Pod status
+    - Deployments
+    - Services
+    - Namespaces
+    - Logs
+    - Any k8s resources
+
+    **Example**: "kubectl get pods -n cortex-system"
+
+    #### 2. get_infrastructure_summary
+    **Purpose**: Comprehensive single-call overview
+    **Returns**:
+    - K8s cluster status
+    - UniFi network health
+    - Proxmox VMs
+    - Sandfly security alerts
+
+    **Best For**: Quick system health check
+
+    #### 3. proxmox_query
+    **Purpose**: Query Proxmox virtualization
+    **Capabilities**:
+    - VM status
+    - LXC containers
+    - Resource usage
+    - Node health
+    - Virtual machine information
+
+    **Example**: "list all running VMs"
+
+    ### UniFi Network Tools (3 tools)
+
+    #### 4. unifi_list_active_clients
+    **Purpose**: List all connected network clients
+    **Details Provided**:
+    - Hostname
+    - IP address
+    - MAC address
+    - Signal strength (WiFi)
+    - Data usage
+    - Connection type (WiFi/wired)
+
+    **Observed Results**:
+    - 30 total clients
+    - 18 WiFi clients
+    - 12 wired clients
+    - 0 guest clients
+
+    #### 5. unifi_get_device_health
+    **Purpose**: Health status of UniFi devices
+    **Device Types**:
+    - Access points
+    - Switches
+    - Gateways
+
+    **Metrics**:
+    - Uptime
+    - CPU usage
+    - Memory usage
+    - Connectivity status
+
+    **Observed**: 7 devices total, all online
+
+    #### 6. unifi_get_client_activity
+    **Purpose**: Client connection analytics
+    **Data**:
+    - Recent connection activity
+    - Bandwidth usage
+    - Network statistics
+
+    ### Sandfly Security Tools (6 tools)
+
+    #### 7. sandfly_query
+    **Purpose**: General-purpose security querying
+    **Supports**:
+    - Security alerts/results
+    - Monitored hosts
+    - Running processes
+    - User accounts
+    - Network listeners
+    - System services
+    - Scheduled tasks
+    - Kernel modules
+    - Trigger scans
+
+    **Natural Language**: "processes on k3s-worker01"
+
+    **Note**: This is the most flexible Sandfly tool
+
+    #### 8. sandfly_get_alerts
+    **Purpose**: Efficient alert retrieval
+    **Filters**:
+    - Severity (critical/high/medium/low)
+    - Resolved status (active/resolved)
+    - Specific hostname
+    - Limit (default: 50)
+
+    **Observed**: 0 active alerts (system clean)
+
+    **Best For**: Alert-focused queries (more efficient than sandfly_query)
+
+    #### 9. sandfly_get_hosts
+    **Purpose**: List monitored Linux hosts
+    **Filters**:
+    - Status (online/offline)
+    - Operating system
+    - Limit (default: 100)
+
+    **Returns**:
+    - Host ID
+    - Hostname
+    - IP address
+    - Active status
+    - Authentication status
+    - First/last seen timestamps
+    - Last scan time
+
+    **Observed Hosts**:
+    - Multiple k3s nodes monitored
+    - Host: 10.88.140.176
+    - Credentials: sandfly-security
+    - Auth: OK
+
+    #### 10. sandfly_get_processes
+    **Purpose**: Process list for specific host
+    **Parameters**:
+    - hostname (required)
+    - suspicious_only (default: false)
+    - limit (default: 100)
+
+    **Use Case**: Incident response, process auditing
+
+    #### 11. sandfly_trigger_scan
+    **Purpose**: On-demand security scan
+    **Parameters**:
+    - hostname (or "all" for all hosts)
+    - policy_id (optional)
+
+    **Use Case**: Ad-hoc security verification
+
+    #### 12. sandfly_query_docs
+    **Purpose**: Query Sandfly documentation
+    **Powered By**: Documentation Master
+    **Returns**:
+    - Alert explanations
+    - Remediation steps
+    - Best practices
+    - Contextual help
+
+    **Example**: "lateral movement alert remediation"
+
+    **Integration**: documentation-master.cortex.svc.cluster.local
+
+    ### Extended Tools (5 more - to be discovered)
+
+    Based on logs showing "17 tools", there are 5 more tools not yet extracted.
+    These likely include:
+    - Additional Proxmox operations
+    - Cloudflare management
+    - Wazuh integration (WAZUH_MCP_URL environment variable exists)
+    - Task management
+    - Worker management
+
+    ## Tool Execution Pattern
+
+    1. **User asks question** in chat
+    2. **Claude analyzes** question
+    3. **Selects appropriate tool(s)** - can use multiple
+    4. **Executes tools** via orchestrator
+    5. **Processes results**
+    6. **Returns formatted response**
+
+    ## Multi-Tool Chaining
+
+    Observed Claude behavior:
+    - **Network health query** → uses unifi_get_device_health + unifi_list_active_clients
+    - **Security check** → uses sandfly_get_alerts + sandfly_get_hosts
+    - Can chain up to max_iterations (50)
+
+    ## Performance Observations
+
+    - **Token usage**: Tracked globally (9556/28000 observed)
+    - **Response time**: Sub-second for simple queries
+    - **Caching**: Hosts cached 5 minutes
+    - **Auth caching**: Tokens/cookies cached with expiry
+
+    ## Best Practices
+
+    ### For General Infrastructure
+    Use `get_infrastructure_summary` - single call, complete overview
+
+    ### For Specific Queries
+    Use targeted tools:
+    - Network → unifi_* tools
+    - Security → sandfly_* tools
+    - VMs → proxmox_query
+    - K8s → kubectl
+
+    ### For Documentation
+    Use `sandfly_query_docs` for security guidance
+
+    ## Tool Access
+
+    **Where**: https://chat.ry-ops.dev
+    **How**: Natural language conversation
+    **Auth**: Handled automatically by orchestrator
+    **Rate Limiting**: Token throttle prevents overuse
+
+    ## Integration Points
+
+    ### MCP Servers (Internal)
+    - unifi-mcp-server.cortex-system.svc.cluster.local:3000
+    - proxmox-mcp-server.cortex-system.svc.cluster.local:3000
+    - sandfly-mcp-server.cortex-system.svc.cluster.local:3000
+
+    ### Direct APIs (Fallback)
+    - Sandfly: 10.88.140.176:443 (v4 API)
+    - Proxmox: 10.88.140.21:8006 (API2/JSON)
+    - UniFi: 10.88.140.16:443
+
+    ### Documentation Master
+    - documentation-master.cortex.svc.cluster.local
+    - Provides contextual help and guides
+
+    ## Priority Queue Integration
+
+    All tool executions go through Redis queues:
+    - critical: cortex:queue:critical
+    - high: cortex:queue:high
+    - medium: cortex:queue:medium
+    - low: cortex:queue:low
+
+    ## Next Documentation Tasks
+
+    - [ ] Extract remaining 5 tools
+    - [ ] Test each tool with real queries
+    - [ ] Document response formats
+    - [ ] Create usage examples
+    - [ ] Map tool → use case matrix
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"tools-catalog.md":"# Cortex Orchestrator - Complete Tools Catalog\n\n**Discovered**: 2026-01-05\n**Total Tools**: 17\n**Available Via**: https://chat.ry-ops.dev\n\n## Tool Categories\n\n### Infrastructure Query Tools (3 tools)\n\n#### 1. kubectl\n**Purpose**: Execute kubectl commands to query K8s cluster\n**Use Cases**:\n- Pod status\n- Deployments\n- Services\n- Namespaces\n- Logs\n- Any k8s resources\n\n**Example**: \"kubectl get pods -n cortex-system\"\n\n#### 2. get_infrastructure_summary\n**Purpose**: Comprehensive single-call overview\n**Returns**:\n- K8s cluster status\n- UniFi network health\n- Proxmox VMs\n- Sandfly security alerts\n\n**Best For**: Quick system health check\n\n#### 3. proxmox_query\n**Purpose**: Query Proxmox virtualization\n**Capabilities**:\n- VM status\n- LXC containers\n- Resource usage\n- Node health\n- Virtual machine information\n\n**Example**: \"list all running VMs\"\n\n### UniFi Network Tools (3 tools)\n\n#### 4. unifi_list_active_clients\n**Purpose**: List all connected network clients\n**Details Provided**:\n- Hostname\n- IP address\n- MAC address\n- Signal strength (WiFi)\n- Data usage\n- Connection type (WiFi/wired)\n\n**Observed Results**:\n- 30 total clients\n- 18 WiFi clients\n- 12 wired clients\n- 0 guest clients\n\n#### 5. unifi_get_device_health\n**Purpose**: Health status of UniFi devices\n**Device Types**:\n- Access points\n- Switches\n- Gateways\n\n**Metrics**:\n- Uptime\n- CPU usage\n- Memory usage\n- Connectivity status\n\n**Observed**: 7 devices total, all online\n\n#### 6. unifi_get_client_activity\n**Purpose**: Client connection analytics\n**Data**:\n- Recent connection activity\n- Bandwidth usage\n- Network statistics\n\n### Sandfly Security Tools (6 tools)\n\n#### 7. sandfly_query\n**Purpose**: General-purpose security querying\n**Supports**:\n- Security alerts/results\n- Monitored hosts\n- Running processes\n- User accounts\n- Network listeners\n- System services\n- Scheduled tasks\n- Kernel modules\n- Trigger scans\n\n**Natural Language**: \"processes on k3s-worker01\"\n\n**Note**: This is the most flexible Sandfly tool\n\n#### 8. sandfly_get_alerts\n**Purpose**: Efficient alert retrieval\n**Filters**:\n- Severity (critical/high/medium/low)\n- Resolved status (active/resolved)\n- Specific hostname\n- Limit (default: 50)\n\n**Observed**: 0 active alerts (system clean)\n\n**Best For**: Alert-focused queries (more efficient than sandfly_query)\n\n#### 9. sandfly_get_hosts\n**Purpose**: List monitored Linux hosts\n**Filters**:\n- Status (online/offline)\n- Operating system\n- Limit (default: 100)\n\n**Returns**:\n- Host ID\n- Hostname\n- IP address\n- Active status\n- Authentication status\n- First/last seen timestamps\n- Last scan time\n\n**Observed Hosts**:\n- Multiple k3s nodes monitored\n- Host: 10.88.140.176\n- Credentials: sandfly-security\n- Auth: OK\n\n#### 10. sandfly_get_processes\n**Purpose**: Process list for specific host\n**Parameters**:\n- hostname (required)\n- suspicious_only (default: false)\n- limit (default: 100)\n\n**Use Case**: Incident response, process auditing\n\n#### 11. sandfly_trigger_scan\n**Purpose**: On-demand security scan\n**Parameters**:\n- hostname (or \"all\" for all hosts)\n- policy_id (optional)\n\n**Use Case**: Ad-hoc security verification\n\n#### 12. sandfly_query_docs\n**Purpose**: Query Sandfly documentation\n**Powered By**: Documentation Master\n**Returns**:\n- Alert explanations\n- Remediation steps\n- Best practices\n- Contextual help\n\n**Example**: \"lateral movement alert remediation\"\n\n**Integration**: documentation-master.cortex.svc.cluster.local\n\n### Extended Tools (5 more - to be discovered)\n\nBased on logs showing \"17 tools\", there are 5 more tools not yet extracted.\nThese likely include:\n- Additional Proxmox operations\n- Cloudflare management\n- Wazuh integration (WAZUH_MCP_URL environment variable exists)\n- Task management\n- Worker management\n\n## Tool Execution Pattern\n\n1. **User asks question** in chat\n2. **Claude analyzes** question\n3. **Selects appropriate tool(s)** - can use multiple\n4. **Executes tools** via orchestrator\n5. **Processes results**\n6. **Returns formatted response**\n\n## Multi-Tool Chaining\n\nObserved Claude behavior:\n- **Network health query** → uses unifi_get_device_health + unifi_list_active_clients\n- **Security check** → uses sandfly_get_alerts + sandfly_get_hosts\n- Can chain up to max_iterations (50)\n\n## Performance Observations\n\n- **Token usage**: Tracked globally (9556/28000 observed)\n- **Response time**: Sub-second for simple queries\n- **Caching**: Hosts cached 5 minutes\n- **Auth caching**: Tokens/cookies cached with expiry\n\n## Best Practices\n\n### For General Infrastructure\nUse `get_infrastructure_summary` - single call, complete overview\n\n### For Specific Queries\nUse targeted tools:\n- Network → unifi_* tools\n- Security → sandfly_* tools\n- VMs → proxmox_query\n- K8s → kubectl\n\n### For Documentation\nUse `sandfly_query_docs` for security guidance\n\n## Tool Access\n\n**Where**: https://chat.ry-ops.dev\n**How**: Natural language conversation\n**Auth**: Handled automatically by orchestrator\n**Rate Limiting**: Token throttle prevents overuse\n\n## Integration Points\n\n### MCP Servers (Internal)\n- unifi-mcp-server.cortex-system.svc.cluster.local:3000\n- proxmox-mcp-server.cortex-system.svc.cluster.local:3000\n- sandfly-mcp-server.cortex-system.svc.cluster.local:3000\n\n### Direct APIs (Fallback)\n- Sandfly: 10.88.140.176:443 (v4 API)\n- Proxmox: 10.88.140.21:8006 (API2/JSON)\n- UniFi: 10.88.140.16:443\n\n### Documentation Master\n- documentation-master.cortex.svc.cluster.local\n- Provides contextual help and guides\n\n## Priority Queue Integration\n\nAll tool executions go through Redis queues:\n- critical: cortex:queue:critical\n- high: cortex:queue:high\n- medium: cortex:queue:medium\n- low: cortex:queue:low\n\n## Next Documentation Tasks\n\n- [ ] Extract remaining 5 tools\n- [ ] Test each tool with real queries\n- [ ] Document response formats\n- [ ] Create usage examples\n- [ ] Map tool → use case matrix\n"},"kind":"ConfigMap","metadata":{"annotations":{},"labels":{"app":"cortex","component":"documentation","type":"tools"},"name":"cortex-tools-catalog","namespace":"cortex"}}
+  creationTimestamp: "2026-01-05T11:27:18Z"
+  labels:
+    app: cortex
+    component: documentation
+    type: tools
+  name: cortex-tools-catalog
+  namespace: cortex
+  resourceVersion: "66154819"
+  uid: 322e1414-1dd1-4d95-beef-854cc3bd1be4

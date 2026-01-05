@@ -1,0 +1,70 @@
+apiVersion: v1
+data:
+  llm-d-architecture.md: "# LLM-D (LLM Daemon) Architecture - Discovered Through Testing\n\n##
+    Discovery Date\n2026-01-05\n\n## What is LLM-D?\n\nThe \"LLM Daemon\" is actually
+    the **Cortex Orchestrator** running in k8s that processes chat requests and executes
+    tools.\n\n## Architecture\n\n```\nUser → Cortex Chat (https://chat.ry-ops.dev)
+    \n     → Redis Queue (cortex:queue:*)\n     → Cortex Orchestrator (pod: cortex-orchestrator-*)\n
+    \    → Claude API (Anthropic)\n     → MCP Servers (UniFi, Proxmox, Sandfly)\n
+    \    → Infrastructure\n```\n\n## Key Components\n\n### 1. Cortex Orchestrator
+    Pod\n- **Location**: cortex namespace\n- **Code**: /app/server.js (119KB)\n- **Port**:
+    8000\n- **Language**: Node.js\n\n### 2. Redis Priority Queues\n- **Service**:
+    redis-queue.cortex.svc.cluster.local:6379\n- **Queues**:\n  - cortex:queue:critical\n
+    \ - cortex:queue:high\n  - cortex:queue:medium  \n  - cortex:queue:low\n\n###
+    3. Token Throttle\n- **Implementation**: token-throttle.js\n- **Function**: Rate
+    limiting across all services\n- **Storage**: Redis\n- **Observed**: 9556/28000
+    tokens used globally\n\n### 4. MCP Server Integration\n\n**Internal Cluster URLs**:\n-
+    UniFi: http://unifi-mcp-server.cortex-system.svc.cluster.local:3000\n- Proxmox:
+    http://proxmox-mcp-server.cortex-system.svc.cluster.local:3000\n- Sandfly: http://sandfly-mcp-server.cortex-system.svc.cluster.local:3000\n\n**Tools
+    Observed in Use**:\n- unifi_get_device_health\n- unifi_list_active_clients\n-
+    sandfly_get_alerts\n- sandfly_get_hosts\n\n### 5. Direct API Integration\n\nThe
+    orchestrator also connects directly to:\n- **Sandfly**: 10.88.140.176:443 (v4
+    API)\n- **Proxmox**: 10.88.140.21:8006 (API2/JSON)\n- **UniFi**: 10.88.140.16:443\n\n##
+    Request Flow\n\n1. **User sends message** via https://chat.ry-ops.dev\n2. **Frontend**
+    creates chat session\n3. **Backend** (cortex-chat-backend-simple) receives message\n4.
+    **Message queued** to Redis (priority-based)\n5. **Orchestrator polls** Redis
+    queues\n6. **Claude API called** with:\n   - Message history (up to 6 messages
+    observed)\n   - 17 tools available\n   - Max iterations: 50\n7. **Claude responds**
+    with tool_use or end_turn\n8. **If tool_use**: Orchestrator executes tool\n9.
+    **Tool result** added to conversation\n10. **Iterate** until end_turn (up to max
+    iterations)\n11. **Response** sent back to user\n\n## Token Management\n\n- **Global
+    Throttle**: Shared across all services via Redis\n- **Prometheus Metrics**: prometheus-metrics.js
+    tracks usage\n- **Observed**: 4098/28000 tokens, 9556/28000 tokens in different
+    requests\n\n## Caching Strategy\n\n- **Sandfly Hosts**: Cached for 5 minutes\n-
+    **Auth Tokens**: Cached with expiry\n  - Sandfly token\n  - Proxmox ticket + CSRF
+    token\n  - UniFi cookie\n\n## Tool Execution\n\nTools are executed by:\n1. Making
+    HTTP requests to MCP servers (preferred)\n2. Direct API calls with cached credentials
+    (fallback)\n\n## Task Processing\n\n- **Poll Interval**: 5 seconds (TASK_POLL_INTERVAL)\n-
+    **Task Directory**: /app/tasks\n- **Self-Heal Worker**: /app/scripts/self-heal-worker.sh\n\n##
+    Observable Behavior\n\nFrom logs, real conversations show:\n- User asks about
+    UniFi network status\n- Claude decides to use unifi_get_device_health + unifi_list_active_clients\n-
+    Results: 7 devices online, 30 clients (18 WiFi, 12 wired)\n- User asks about Sandfly
+    security\n- Claude uses sandfly_get_alerts + sandfly_get_hosts\n- Results: 0 alerts,
+    multiple k3s hosts monitored\n\n## Key Insights\n\n1. **Not a separate daemon**
+    - it's the orchestrator pod\n2. **Works via chat interface** - no local MCP server
+    needed for basic use\n3. **Redis-based queuing** - allows priority handling\n4.
+    **Intelligent tool routing** - Claude decides which tools to use\n5. **17 tools
+    available** - more than the 11 in local MCP server docs\n6. **Token-efficient**
+    - throttling prevents runaway usage\n7. **Cached authentication** - reduces latency\n\n##
+    What This Means for Users\n\n- **Access via https://chat.ry-ops.dev** - primary
+    interface\n- **No local setup needed** - everything runs in k8s\n- **Conversational
+    interface** - ask questions naturally\n- **Multi-tool execution** - Claude chains
+    tools as needed\n- **Priority support** - critical tasks processed first\n\n##
+    Next Steps to Document\n\n- [ ] Full list of 17 available tools\n- [ ] MoE routing
+    logic within orchestrator\n- [ ] Self-heal worker behavior\n- [ ] Task file format
+    and structure\n- [ ] Integration with queue workers\n- [ ] Prometheus metrics
+    schema\n"
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"llm-d-architecture.md":"# LLM-D (LLM Daemon) Architecture - Discovered Through Testing\n\n## Discovery Date\n2026-01-05\n\n## What is LLM-D?\n\nThe \"LLM Daemon\" is actually the **Cortex Orchestrator** running in k8s that processes chat requests and executes tools.\n\n## Architecture\n\n```\nUser → Cortex Chat (https://chat.ry-ops.dev) \n     → Redis Queue (cortex:queue:*)\n     → Cortex Orchestrator (pod: cortex-orchestrator-*)\n     → Claude API (Anthropic)\n     → MCP Servers (UniFi, Proxmox, Sandfly)\n     → Infrastructure\n```\n\n## Key Components\n\n### 1. Cortex Orchestrator Pod\n- **Location**: cortex namespace\n- **Code**: /app/server.js (119KB)\n- **Port**: 8000\n- **Language**: Node.js\n\n### 2. Redis Priority Queues\n- **Service**: redis-queue.cortex.svc.cluster.local:6379\n- **Queues**:\n  - cortex:queue:critical\n  - cortex:queue:high\n  - cortex:queue:medium  \n  - cortex:queue:low\n\n### 3. Token Throttle\n- **Implementation**: token-throttle.js\n- **Function**: Rate limiting across all services\n- **Storage**: Redis\n- **Observed**: 9556/28000 tokens used globally\n\n### 4. MCP Server Integration\n\n**Internal Cluster URLs**:\n- UniFi: http://unifi-mcp-server.cortex-system.svc.cluster.local:3000\n- Proxmox: http://proxmox-mcp-server.cortex-system.svc.cluster.local:3000\n- Sandfly: http://sandfly-mcp-server.cortex-system.svc.cluster.local:3000\n\n**Tools Observed in Use**:\n- unifi_get_device_health\n- unifi_list_active_clients\n- sandfly_get_alerts\n- sandfly_get_hosts\n\n### 5. Direct API Integration\n\nThe orchestrator also connects directly to:\n- **Sandfly**: 10.88.140.176:443 (v4 API)\n- **Proxmox**: 10.88.140.21:8006 (API2/JSON)\n- **UniFi**: 10.88.140.16:443\n\n## Request Flow\n\n1. **User sends message** via https://chat.ry-ops.dev\n2. **Frontend** creates chat session\n3. **Backend** (cortex-chat-backend-simple) receives message\n4. **Message queued** to Redis (priority-based)\n5. **Orchestrator polls** Redis queues\n6. **Claude API called** with:\n   - Message history (up to 6 messages observed)\n   - 17 tools available\n   - Max iterations: 50\n7. **Claude responds** with tool_use or end_turn\n8. **If tool_use**: Orchestrator executes tool\n9. **Tool result** added to conversation\n10. **Iterate** until end_turn (up to max iterations)\n11. **Response** sent back to user\n\n## Token Management\n\n- **Global Throttle**: Shared across all services via Redis\n- **Prometheus Metrics**: prometheus-metrics.js tracks usage\n- **Observed**: 4098/28000 tokens, 9556/28000 tokens in different requests\n\n## Caching Strategy\n\n- **Sandfly Hosts**: Cached for 5 minutes\n- **Auth Tokens**: Cached with expiry\n  - Sandfly token\n  - Proxmox ticket + CSRF token\n  - UniFi cookie\n\n## Tool Execution\n\nTools are executed by:\n1. Making HTTP requests to MCP servers (preferred)\n2. Direct API calls with cached credentials (fallback)\n\n## Task Processing\n\n- **Poll Interval**: 5 seconds (TASK_POLL_INTERVAL)\n- **Task Directory**: /app/tasks\n- **Self-Heal Worker**: /app/scripts/self-heal-worker.sh\n\n## Observable Behavior\n\nFrom logs, real conversations show:\n- User asks about UniFi network status\n- Claude decides to use unifi_get_device_health + unifi_list_active_clients\n- Results: 7 devices online, 30 clients (18 WiFi, 12 wired)\n- User asks about Sandfly security\n- Claude uses sandfly_get_alerts + sandfly_get_hosts\n- Results: 0 alerts, multiple k3s hosts monitored\n\n## Key Insights\n\n1. **Not a separate daemon** - it's the orchestrator pod\n2. **Works via chat interface** - no local MCP server needed for basic use\n3. **Redis-based queuing** - allows priority handling\n4. **Intelligent tool routing** - Claude decides which tools to use\n5. **17 tools available** - more than the 11 in local MCP server docs\n6. **Token-efficient** - throttling prevents runaway usage\n7. **Cached authentication** - reduces latency\n\n## What This Means for Users\n\n- **Access via https://chat.ry-ops.dev** - primary interface\n- **No local setup needed** - everything runs in k8s\n- **Conversational interface** - ask questions naturally\n- **Multi-tool execution** - Claude chains tools as needed\n- **Priority support** - critical tasks processed first\n\n## Next Steps to Document\n\n- [ ] Full list of 17 available tools\n- [ ] MoE routing logic within orchestrator\n- [ ] Self-heal worker behavior\n- [ ] Task file format and structure\n- [ ] Integration with queue workers\n- [ ] Prometheus metrics schema\n"},"kind":"ConfigMap","metadata":{"annotations":{},"labels":{"app":"cortex","component":"documentation","type":"llm-d"},"name":"llm-d-architecture-doc","namespace":"cortex"}}
+  creationTimestamp: "2026-01-05T11:26:13Z"
+  labels:
+    app: cortex
+    component: documentation
+    type: llm-d
+  name: llm-d-architecture-doc
+  namespace: cortex
+  resourceVersion: "66149517"
+  uid: 7b7adc22-8e13-4610-9c0a-54209fd3a2bf

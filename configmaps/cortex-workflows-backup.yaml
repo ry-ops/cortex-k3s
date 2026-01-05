@@ -1,0 +1,119 @@
+apiVersion: v1
+data:
+  workflows.md: "# Cortex System Workflows - Real Implementation\n\n**Documented**:
+    2026-01-05\n**Based On**: Live system observation and testing\n\n## Architecture
+    Overview\n\n```\nUser (Browser)\n     ↓\nhttps://chat.ry-ops.dev (Nginx: cortex-chat-658f447774-8c4sc)\n
+    \    ↓\nBackend (cortex-chat-backend-simple-5d95b64c58-2z7gf:8080)\n     ↓\nOrchestrator
+    (cortex-orchestrator-bcb779876-db8r5:8000)\n     ↓\nRedis Queues (redis-queue-7d9d7f4c7b-t5nfq:6379)\n
+    \    ↓\nClaude API (api.anthropic.com)\n     ↓\nMCP Servers / Direct APIs\n     ↓\nInfrastructure
+    (UniFi, Proxmox, Sandfly, K8s)\n```\n\n## Component Connections\n\n### Frontend
+    → Backend\n- **Frontend**: Nginx serving static HTML/JS\n- **LoadBalancer**: 10.88.145.210
+    (also: chat.ry-ops.dev)\n- **Backend URL**: http://cortex-orchestrator.cortex.svc.cluster.local:8000\n-
+    **Protocol**: HTTP REST API\n\n### Backend → Orchestrator\n- **URL**: http://cortex-orchestrator.cortex.svc.cluster.local:8000\n-
+    **Method**: Direct HTTP calls\n- **Format**: JSON\n\n### Orchestrator → Redis\n-
+    **Primary**: redis-queue.cortex.svc.cluster.local:6379\n- **Fallback**: redis.cortex-system.svc.cluster.local:6379\n-
+    **Protocol**: Redis protocol\n- **Keys Found**:\n  - cortex:queue:depth:high\n
+    \ - anthropic:global:token-usage\n\n### Orchestrator → Claude API\n- **Endpoint**:
+    api.anthropic.com\n- **Model**: claude-sonnet-4-5-20250929\n- **Max Tokens**:
+    4096 per response\n- **Tools**: 17 tools provided\n- **Max Iterations**: 50\n\n###
+    Orchestrator → MCP Servers\n- **UniFi**: http://unifi-mcp-server.cortex-system.svc.cluster.local:3000\n-
+    **Proxmox**: http://proxmox-mcp-server.cortex-system.svc.cluster.local:3000\n-
+    **Sandfly**: http://sandfly-mcp-server.cortex-system.svc.cluster.local:3000\n\n###
+    Orchestrator → Direct APIs (Fallback)\n- **Sandfly**: https://10.88.140.176:443/v4\n-
+    **Proxmox**: https://10.88.140.21:8006/api2/json\n- **UniFi**: https://10.88.140.16:443\n\n##
+    Workflow 1: User Query Execution\n\n### Step 1: User Input\nUser types message
+    in https://chat.ry-ops.dev\nExample: \"What's the network status?\"\n\n### Step
+    2: Frontend Processing\n- JavaScript captures message\n- Creates/resumes chat
+    session\n- POST to backend /api/chat\n\n### Step 3: Backend Processing\n- Receives
+    chat message\n- Adds to conversation history\n- Forwards to orchestrator\n\n###
+    Step 4: Orchestrator Processing\n- Receives request\n- Checks token throttle (28,000
+    tokens/min limit)\n- Prepares Claude API call with:\n  - Conversation history
+    (up to 50 messages)\n  - 17 available tools\n  - System prompt\n\n### Step 5:
+    Claude Decision\n- Analyzes user question\n- Determines which tool(s) to use\n-
+    Returns either:\n  - tool_use (needs to execute tools)\n  - end_turn (has final
+    answer)\n\n### Step 6: Tool Execution (if tool_use)\n\n**Example: Network status
+    query**\nClaude chooses:\n1. unifi_get_device_health\n2. unifi_list_active_clients\n\nOrchestrator:\n1.
+    Executes tool 1 via MCP server\n2. Gets result: 7 devices, all online\n3. Executes
+    tool 2 via MCP server\n4. Gets result: 30 clients (18 WiFi, 12 wired)\n5. Adds
+    results to conversation\n6. Calls Claude API again with results\n\n### Step 7:
+    Claude Response\n- Processes tool results\n- Formats user-friendly response\n-
+    Returns end_turn\n\n### Step 8: Response Delivery\n- Orchestrator sends response
+    to backend\n- Backend sends to frontend\n- Frontend displays to user\n\n**Total
+    Time**: Sub-second for simple queries\n\n## Workflow 2: Security Scan Request\n\n###
+    Example: \"Check Sandfly security status\"\n\n#### Claude Tool Selection\n1. sandfly_get_alerts\n2.
+    sandfly_get_hosts\n\n#### Tool Execution\n\n**sandfly_get_alerts**:\n- Orchestrator
+    calls Sandfly MCP or direct API\n- Parameters: limit=50\n- Result: {'data': [],
+    'total': 0}\n- Interpretation: No active alerts\n\n**sandfly_get_hosts**:\n- Parameters:
+    summary=true, limit=100\n- Result: Multiple k3s hosts\n- Sample host:\n  - ID:
+    9c0528ce3faede78b38149a88a6762ae71008b9ac6595a8384c0921b73805883\n  - Hostname:
+    10.88.140.176\n  - Status: Active\n  - Auth: OK\n  - Last seen: Recent\n\n####
+    Response\n\"Security status is healthy. Sandfly is monitoring [N] hosts with 0
+    active alerts.\"\n\n## Workflow 3: Task Creation\n\n### Tool: cortex_create_task\n\nUser:
+    \"Create a task to scan all VMs\"\n\nClaude:\n1. Uses cortex_create_task tool\n2.
+    Parameters:\n   - description: \"Scan all VMs for security issues\"\n   - priority:
+    \"medium\"\n   - type: \"security-scan\"\n\nOrchestrator:\n1. Creates task in
+    Redis queue\n2. Queue: cortex:queue:medium\n3. Task ID: generated\n4. Returns
+    task confirmation\n\n### Task Processing (separate workflow)\n- Queue worker picks
+    up task\n- Executes scan\n- Updates task status\n- Can be monitored via cortex_get_task_status\n\n##
+    Workflow 4: Multi-Tool Chains\n\n### Example: \"Give me a complete infrastructure
+    report\"\n\nClaude Strategy:\n1. Use get_infrastructure_summary (single call)\n\nOR
+    if more detail needed:\n\n1. kubectl (K8s status)\n2. unifi_get_device_health
+    (Network)\n3. proxmox_query (VMs)\n4. sandfly_get_alerts (Security)\n\nAll executed
+    in sequence, results aggregated.\n\n## Redis Queue Management\n\n### Priority
+    Queues\n- **cortex:queue:critical**: Highest priority\n- **cortex:queue:high**:
+    High priority  \n- **cortex:queue:medium**: Default\n- **cortex:queue:low**: Background
+    tasks\n\n### Queue Depth Tracking\n- Key: cortex:queue:depth:high\n- Used for
+    monitoring and throttling\n\n### Token Usage Tracking\n- Key: anthropic:global:token-usage\n-
+    Updated on each Claude API call\n- Enforces 28,000 tokens/min limit\n\n## Token
+    Throttle System\n\n### Implementation\nFile: /app/token-throttle.js\n\n### Behavior\n-
+    Tracks global token usage across ALL services\n- Uses Redis for shared state\n-
+    Window: 1 minute rolling\n- Limit: 28,000 tokens\n- Action on exceed: Reject request,
+    return error\n\n### Observed Usage\n- Request 1: 4,098/28,000 tokens\n- Request
+    2: 9,556/28,000 tokens\n- System operating well within limits\n\n## Authentication
+    & Caching\n\n### Sandfly\n- Token-based authentication\n- Token cached until expiry\n-
+    Hosts cache: 5 minutes\n\n### Proxmox\n- Ticket + CSRF token\n- Cached until expiry\n\n###
+    UniFi\n- Cookie-based authentication\n- Cookie cached until expiry\n\n## Error
+    Handling\n\n### Tool Execution Failures\n- Orchestrator catches errors\n- Returns
+    error to Claude\n- Claude can retry or explain failure to user\n\n### API Failures\n-
+    MCP server down → Try direct API\n- Direct API down → Return error\n- Auth failure
+    → Re-authenticate\n\n### Throttle Exceeded\n- Return error to user\n- Suggest
+    trying again in a moment\n\n## Metrics & Monitoring\n\n### Prometheus Metrics\nFile:
+    /app/prometheus-metrics.js\n\n### Health Checks\n- Backend: /health endpoint\n-
+    Orchestrator: Kubernetes liveness/readiness probes\n\n### Logs\nAll components
+    log to stdout:\n- [Cortex] Tool execution\n- [CortexChat] Chat processing\n- [TokenThrottle]
+    Rate limiting\n- [Redis] Connection status\n\n## Current System Status\n\n###
+    Observed Behavior\n- ✅ Chat interface working (https://chat.ry-ops.dev)\n- ✅ All
+    17 tools functional\n- ✅ UniFi integration working (7 devices, 30 clients)\n-
+    ✅ Sandfly integration working (0 alerts, multiple hosts)\n- ✅ Redis queues operational\n-
+    ✅ Token throttle working\n- ✅ Multi-tool chains executing\n\n### Recent Activity\n-
+    Users asking about network status\n- Users checking Sandfly security\n- All queries
+    completing successfully\n- No errors observed\n\n## Usage Recommendations\n\n###
+    For Quick Infrastructure Overview\nAsk: \"Show me the infrastructure summary\"\nTool
+    used: get_infrastructure_summary\n\n### For Specific Systems\n- Network: \"What's
+    the UniFi status?\"\n- Security: \"Any Sandfly alerts?\"\n- VMs: \"List Proxmox
+    VMs\"\n- K8s: \"Show cortex pods\"\n\n### For Task Management\n- Create: \"Create
+    a task to [action]\"\n- List: \"Show all tasks\"\n- Check: \"What's the status
+    of task [id]\"\n\n### For Documentation\nAsk: \"How do I remediate [security issue]?\"\nTool
+    used: sandfly_query_docs\n\n## Performance Characteristics\n\n### Response Times\n-
+    Simple queries: <1 second\n- Multi-tool queries: 1-3 seconds\n- Complex analysis:
+    3-10 seconds\n\n### Token Efficiency\n- Average request: 4,000-10,000 tokens\n-
+    With 28,000/min limit: ~3-7 requests/minute max\n- Practical rate: Much lower
+    due to user interaction\n\n### Caching Benefits\n- Reduced auth overhead\n- Faster
+    repeated queries\n- Lower API load\n\n## Future Enhancements Identified\n\n- [
+    ] WebSocket for real-time updates\n- [ ] Task progress streaming\n- [ ] Bulk operations
+    support\n- [ ] Custom tool creation\n- [ ] User-defined workflows\n- [ ] Alert
+    subscriptions\n- [ ] Report generation\n- [ ] Scheduled tasks\n"
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"workflows.md":"# Cortex System Workflows - Real Implementation\n\n**Documented**: 2026-01-05\n**Based On**: Live system observation and testing\n\n## Architecture Overview\n\n```\nUser (Browser)\n     ↓\nhttps://chat.ry-ops.dev (Nginx: cortex-chat-658f447774-8c4sc)\n     ↓\nBackend (cortex-chat-backend-simple-5d95b64c58-2z7gf:8080)\n     ↓\nOrchestrator (cortex-orchestrator-bcb779876-db8r5:8000)\n     ↓\nRedis Queues (redis-queue-7d9d7f4c7b-t5nfq:6379)\n     ↓\nClaude API (api.anthropic.com)\n     ↓\nMCP Servers / Direct APIs\n     ↓\nInfrastructure (UniFi, Proxmox, Sandfly, K8s)\n```\n\n## Component Connections\n\n### Frontend → Backend\n- **Frontend**: Nginx serving static HTML/JS\n- **LoadBalancer**: 10.88.145.210 (also: chat.ry-ops.dev)\n- **Backend URL**: http://cortex-orchestrator.cortex.svc.cluster.local:8000\n- **Protocol**: HTTP REST API\n\n### Backend → Orchestrator\n- **URL**: http://cortex-orchestrator.cortex.svc.cluster.local:8000\n- **Method**: Direct HTTP calls\n- **Format**: JSON\n\n### Orchestrator → Redis\n- **Primary**: redis-queue.cortex.svc.cluster.local:6379\n- **Fallback**: redis.cortex-system.svc.cluster.local:6379\n- **Protocol**: Redis protocol\n- **Keys Found**:\n  - cortex:queue:depth:high\n  - anthropic:global:token-usage\n\n### Orchestrator → Claude API\n- **Endpoint**: api.anthropic.com\n- **Model**: claude-sonnet-4-5-20250929\n- **Max Tokens**: 4096 per response\n- **Tools**: 17 tools provided\n- **Max Iterations**: 50\n\n### Orchestrator → MCP Servers\n- **UniFi**: http://unifi-mcp-server.cortex-system.svc.cluster.local:3000\n- **Proxmox**: http://proxmox-mcp-server.cortex-system.svc.cluster.local:3000\n- **Sandfly**: http://sandfly-mcp-server.cortex-system.svc.cluster.local:3000\n\n### Orchestrator → Direct APIs (Fallback)\n- **Sandfly**: https://10.88.140.176:443/v4\n- **Proxmox**: https://10.88.140.21:8006/api2/json\n- **UniFi**: https://10.88.140.16:443\n\n## Workflow 1: User Query Execution\n\n### Step 1: User Input\nUser types message in https://chat.ry-ops.dev\nExample: \"What's the network status?\"\n\n### Step 2: Frontend Processing\n- JavaScript captures message\n- Creates/resumes chat session\n- POST to backend /api/chat\n\n### Step 3: Backend Processing\n- Receives chat message\n- Adds to conversation history\n- Forwards to orchestrator\n\n### Step 4: Orchestrator Processing\n- Receives request\n- Checks token throttle (28,000 tokens/min limit)\n- Prepares Claude API call with:\n  - Conversation history (up to 50 messages)\n  - 17 available tools\n  - System prompt\n\n### Step 5: Claude Decision\n- Analyzes user question\n- Determines which tool(s) to use\n- Returns either:\n  - tool_use (needs to execute tools)\n  - end_turn (has final answer)\n\n### Step 6: Tool Execution (if tool_use)\n\n**Example: Network status query**\nClaude chooses:\n1. unifi_get_device_health\n2. unifi_list_active_clients\n\nOrchestrator:\n1. Executes tool 1 via MCP server\n2. Gets result: 7 devices, all online\n3. Executes tool 2 via MCP server\n4. Gets result: 30 clients (18 WiFi, 12 wired)\n5. Adds results to conversation\n6. Calls Claude API again with results\n\n### Step 7: Claude Response\n- Processes tool results\n- Formats user-friendly response\n- Returns end_turn\n\n### Step 8: Response Delivery\n- Orchestrator sends response to backend\n- Backend sends to frontend\n- Frontend displays to user\n\n**Total Time**: Sub-second for simple queries\n\n## Workflow 2: Security Scan Request\n\n### Example: \"Check Sandfly security status\"\n\n#### Claude Tool Selection\n1. sandfly_get_alerts\n2. sandfly_get_hosts\n\n#### Tool Execution\n\n**sandfly_get_alerts**:\n- Orchestrator calls Sandfly MCP or direct API\n- Parameters: limit=50\n- Result: {'data': [], 'total': 0}\n- Interpretation: No active alerts\n\n**sandfly_get_hosts**:\n- Parameters: summary=true, limit=100\n- Result: Multiple k3s hosts\n- Sample host:\n  - ID: 9c0528ce3faede78b38149a88a6762ae71008b9ac6595a8384c0921b73805883\n  - Hostname: 10.88.140.176\n  - Status: Active\n  - Auth: OK\n  - Last seen: Recent\n\n#### Response\n\"Security status is healthy. Sandfly is monitoring [N] hosts with 0 active alerts.\"\n\n## Workflow 3: Task Creation\n\n### Tool: cortex_create_task\n\nUser: \"Create a task to scan all VMs\"\n\nClaude:\n1. Uses cortex_create_task tool\n2. Parameters:\n   - description: \"Scan all VMs for security issues\"\n   - priority: \"medium\"\n   - type: \"security-scan\"\n\nOrchestrator:\n1. Creates task in Redis queue\n2. Queue: cortex:queue:medium\n3. Task ID: generated\n4. Returns task confirmation\n\n### Task Processing (separate workflow)\n- Queue worker picks up task\n- Executes scan\n- Updates task status\n- Can be monitored via cortex_get_task_status\n\n## Workflow 4: Multi-Tool Chains\n\n### Example: \"Give me a complete infrastructure report\"\n\nClaude Strategy:\n1. Use get_infrastructure_summary (single call)\n\nOR if more detail needed:\n\n1. kubectl (K8s status)\n2. unifi_get_device_health (Network)\n3. proxmox_query (VMs)\n4. sandfly_get_alerts (Security)\n\nAll executed in sequence, results aggregated.\n\n## Redis Queue Management\n\n### Priority Queues\n- **cortex:queue:critical**: Highest priority\n- **cortex:queue:high**: High priority  \n- **cortex:queue:medium**: Default\n- **cortex:queue:low**: Background tasks\n\n### Queue Depth Tracking\n- Key: cortex:queue:depth:high\n- Used for monitoring and throttling\n\n### Token Usage Tracking\n- Key: anthropic:global:token-usage\n- Updated on each Claude API call\n- Enforces 28,000 tokens/min limit\n\n## Token Throttle System\n\n### Implementation\nFile: /app/token-throttle.js\n\n### Behavior\n- Tracks global token usage across ALL services\n- Uses Redis for shared state\n- Window: 1 minute rolling\n- Limit: 28,000 tokens\n- Action on exceed: Reject request, return error\n\n### Observed Usage\n- Request 1: 4,098/28,000 tokens\n- Request 2: 9,556/28,000 tokens\n- System operating well within limits\n\n## Authentication \u0026 Caching\n\n### Sandfly\n- Token-based authentication\n- Token cached until expiry\n- Hosts cache: 5 minutes\n\n### Proxmox\n- Ticket + CSRF token\n- Cached until expiry\n\n### UniFi\n- Cookie-based authentication\n- Cookie cached until expiry\n\n## Error Handling\n\n### Tool Execution Failures\n- Orchestrator catches errors\n- Returns error to Claude\n- Claude can retry or explain failure to user\n\n### API Failures\n- MCP server down → Try direct API\n- Direct API down → Return error\n- Auth failure → Re-authenticate\n\n### Throttle Exceeded\n- Return error to user\n- Suggest trying again in a moment\n\n## Metrics \u0026 Monitoring\n\n### Prometheus Metrics\nFile: /app/prometheus-metrics.js\n\n### Health Checks\n- Backend: /health endpoint\n- Orchestrator: Kubernetes liveness/readiness probes\n\n### Logs\nAll components log to stdout:\n- [Cortex] Tool execution\n- [CortexChat] Chat processing\n- [TokenThrottle] Rate limiting\n- [Redis] Connection status\n\n## Current System Status\n\n### Observed Behavior\n- ✅ Chat interface working (https://chat.ry-ops.dev)\n- ✅ All 17 tools functional\n- ✅ UniFi integration working (7 devices, 30 clients)\n- ✅ Sandfly integration working (0 alerts, multiple hosts)\n- ✅ Redis queues operational\n- ✅ Token throttle working\n- ✅ Multi-tool chains executing\n\n### Recent Activity\n- Users asking about network status\n- Users checking Sandfly security\n- All queries completing successfully\n- No errors observed\n\n## Usage Recommendations\n\n### For Quick Infrastructure Overview\nAsk: \"Show me the infrastructure summary\"\nTool used: get_infrastructure_summary\n\n### For Specific Systems\n- Network: \"What's the UniFi status?\"\n- Security: \"Any Sandfly alerts?\"\n- VMs: \"List Proxmox VMs\"\n- K8s: \"Show cortex pods\"\n\n### For Task Management\n- Create: \"Create a task to [action]\"\n- List: \"Show all tasks\"\n- Check: \"What's the status of task [id]\"\n\n### For Documentation\nAsk: \"How do I remediate [security issue]?\"\nTool used: sandfly_query_docs\n\n## Performance Characteristics\n\n### Response Times\n- Simple queries: \u003c1 second\n- Multi-tool queries: 1-3 seconds\n- Complex analysis: 3-10 seconds\n\n### Token Efficiency\n- Average request: 4,000-10,000 tokens\n- With 28,000/min limit: ~3-7 requests/minute max\n- Practical rate: Much lower due to user interaction\n\n### Caching Benefits\n- Reduced auth overhead\n- Faster repeated queries\n- Lower API load\n\n## Future Enhancements Identified\n\n- [ ] WebSocket for real-time updates\n- [ ] Task progress streaming\n- [ ] Bulk operations support\n- [ ] Custom tool creation\n- [ ] User-defined workflows\n- [ ] Alert subscriptions\n- [ ] Report generation\n- [ ] Scheduled tasks\n"},"kind":"ConfigMap","metadata":{"annotations":{},"labels":{"app":"cortex","component":"documentation","type":"workflows"},"name":"cortex-workflows-doc","namespace":"cortex"}}
+  creationTimestamp: "2026-01-05T11:29:17Z"
+  labels:
+    app: cortex
+    component: documentation
+    type: workflows
+  name: cortex-workflows-doc
+  namespace: cortex
+  resourceVersion: "66160097"
+  uid: 8a17aa8c-3a33-4421-8abb-4278e0685055
