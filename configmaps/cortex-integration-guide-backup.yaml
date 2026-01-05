@@ -1,0 +1,554 @@
+apiVersion: v1
+data:
+  integration-guide.md: |
+    # Cortex System Integration Guide - Complete Reference
+
+    **Created**: 2026-01-05
+    **Purpose**: Master guide connecting all Cortex components
+    **Audience**: Users, developers, operators
+
+    ## Quick Start: How to Use Cortex
+
+    ### Option 1: Chat Interface (Recommended)
+    **URL**: https://chat.ry-ops.dev
+
+    **What you can do**:
+    1. Ask natural language questions
+    2. Get infrastructure status
+    3. Create and monitor tasks
+    4. Query UniFi, Proxmox, Sandfly
+    5. Access Kubernetes cluster info
+
+    **Example queries**:
+    ```
+    "Show me all pods in the cortex namespace"
+    "What's the UniFi network status?"
+    "Check Sandfly for security alerts"
+    "Create a task to scan all VMs for vulnerabilities"
+    "Get the status of task-chat-1767612867490-4jpev431z"
+    ```
+
+    ### Option 2: MCP Server (Local Development)
+    **Location**: /Users/ryandahlberg/Projects/cortex/cortex-mcp-server
+
+    **What you can do**:
+    1. Connect via official Claude app
+    2. Connect via Claude Code
+    3. Use 11 Cortex tools
+    4. Get MoE routing assistance
+
+    **Start server**:
+    ```bash
+    cd /Users/ryandahlberg/Projects/cortex/cortex-mcp-server
+    npm install
+    node src/index.js
+    ```
+
+    **Configuration**: ~/.config/claude-code/mcp_settings.json
+
+    ### Option 3: Direct API (Advanced)
+    **Orchestrator**: http://cortex-orchestrator.cortex.svc.cluster.local:8000
+
+    **Available endpoints**:
+    - POST /api/chat - Chat with Cortex
+    - POST /execute-tool - Execute cortex_* tools
+    - GET /health - Health check
+    - GET /metrics - System metrics
+    - GET /api/queue/status - Queue status
+    - GET /api/workers/status - Worker status
+
+    ## Architecture Layers
+
+    ### Layer 1: User Interface
+    ```
+    https://chat.ry-ops.dev (Web UI)
+         ↓
+    cortex-chat-backend-simple (Pod)
+         ↓
+    Layer 2...
+    ```
+
+    ### Layer 2: Orchestration
+    ```
+    cortex-orchestrator (Pod)
+    - Receives requests
+    - Calls Claude API
+    - Provides 17 tools to Claude
+    - Routes tool executions
+    - Returns responses
+         ↓
+    Layer 3 (Tools) or Layer 4 (Tasks)...
+    ```
+
+    ### Layer 3: Tool Execution
+    **17 Tools Available**:
+
+    **Infrastructure Query (3 tools)**:
+    1. kubectl - Kubernetes cluster queries
+    2. get_infrastructure_summary - Complete overview
+    3. proxmox_query - Proxmox VMs/containers
+
+    **UniFi Network (3 tools)**:
+    4. unifi_list_active_clients
+    5. unifi_get_device_health
+    6. unifi_get_client_activity
+
+    **Sandfly Security (6 tools)**:
+    7. sandfly_query
+    8. sandfly_get_alerts
+    9. sandfly_get_hosts
+    10. sandfly_get_processes
+    11. sandfly_trigger_scan
+    12. sandfly_query_docs
+
+    **Cortex Task Management (4 tools)**:
+    13. cortex_create_task
+    14. cortex_get_tasks
+    15. cortex_get_task_status
+    16. cortex_get_metrics
+
+    **Cortex Agent Management (1 tool)**:
+    17. cortex_list_agents
+
+    ### Layer 4: Task Processing
+    ```
+    Redis Priority Queues
+    - cortex:queue:critical
+    - cortex:queue:high
+    - cortex:queue:medium
+    - cortex:queue:low
+         ↓
+    Queue Workers (2 pods)
+    - cortex-queue-worker-*
+    - BRPOP from queues
+    - Execute with Claude API
+    - Store results
+         ↓
+    Results storage (Dual persistence)
+    ```
+
+    ### Layer 5: Infrastructure Integration
+    ```
+    MCP Servers (Internal)
+    - unifi-mcp-server.cortex-system:3000
+    - proxmox-mcp-server.cortex-system:3000
+    - sandfly-mcp-server.cortex-system:3000
+
+    Direct APIs (Fallback)
+    - UniFi: 10.88.140.16:443
+    - Proxmox: 10.88.140.21:8006
+    - Sandfly: 10.88.140.176:443
+
+    Kubernetes
+    - Via kubectl (in orchestrator pod)
+    ```
+
+    ## Complete Request Flow Examples
+
+    ### Example 1: Simple Query via Chat
+    ```
+    1. User opens https://chat.ry-ops.dev
+    2. User types: "Show pods in cortex namespace"
+    3. Frontend sends POST to backend /api/chat
+    4. Backend forwards to orchestrator /api/chat
+    5. Orchestrator calls Claude API with:
+       - User message
+       - 17 tools available
+       - Max iterations: 50
+    6. Claude responds with tool_use: kubectl
+       - command: "get pods -n cortex"
+    7. Orchestrator executes kubectl command
+    8. Orchestrator sends result back to Claude
+    9. Claude formats response
+    10. Response flows back: Orchestrator → Backend → Frontend → User
+
+    Total time: Sub-second
+    Tokens used: ~2,000-4,000
+    ```
+
+    ### Example 2: Task Creation and Processing
+    ```
+    1. User types: "Create a task to analyze security posture"
+    2. Claude selects: cortex_create_task tool
+    3. Orchestrator creates task:
+       - ID: task-chat-{timestamp}-{random}
+       - Priority: medium
+       - Status: queued
+    4. Dual persistence:
+       - Write to /app/tasks/{id}.json
+       - LPUSH to cortex:queue:medium
+    5. Queue worker (one of 2 pods) uses BRPOP
+    6. Worker picks up task within 5 seconds
+    7. Worker checks rate limit (40k tokens/min)
+    8. Worker calls Claude API to process task
+    9. Worker stores result:
+       - Update /app/tasks/{id}.json
+       - Set Redis cortex:result:{id} (24h TTL)
+    10. User queries: "What's the status of task-chat-..."
+    11. Claude uses: cortex_get_task_status
+    12. User sees completed task with results
+
+    Total time: 5-30 seconds
+    Tokens used: ~2,000-10,000
+    ```
+
+    ### Example 3: Multi-Tool Query
+    ```
+    1. User: "Give me complete infrastructure status"
+    2. Claude strategy: Use get_infrastructure_summary
+       OR chain multiple tools:
+       - kubectl (K8s)
+       - unifi_get_device_health (Network)
+       - proxmox_query (VMs)
+       - sandfly_get_alerts (Security)
+    3. Orchestrator executes each tool sequentially
+    4. Claude aggregates results
+    5. Returns comprehensive report
+
+    Total time: 3-10 seconds
+    Tokens used: ~5,000-15,000
+    ```
+
+    ## Rate Limiting and Token Budgets
+
+    ### Orchestrator Throttle
+    - **Limit**: 28,000 tokens/minute
+    - **Storage**: Redis (anthropic:global:token-usage)
+    - **Applies to**: Chat requests
+    - **Behavior**: Reject request if exceeded
+
+    ### Worker Rate Limit
+    - **Limit**: 40,000 tokens/minute
+    - **Storage**: Redis (cortex:tokens:minute)
+    - **Applies to**: Queued task processing
+    - **Behavior**: Wait until window resets
+
+    ### Daily Budget
+    - **Limit**: 270,000 tokens/day
+    - **Location**: coordination/token-budget.json
+    - **Tracked by**: MoE coordination system
+
+    ### Master Agent Budgets
+    - Coordinator: 50,000 tokens
+    - Development Master: 30,000 tokens
+    - Security Master: 30,000 tokens
+    - Inventory Master: 20,000 tokens
+    - CI/CD Master: 20,000 tokens
+
+    ## Master Agents (MoE System)
+
+    ### Currently Active
+    1. **documentation-master** (cortex namespace)
+       - Pod: documentation-master-5bf954f65f-dnss7
+       - Purpose: Query Sandfly documentation
+       - Endpoint: http://documentation-master.cortex.svc.cluster.local:8080
+       - Integration: sandfly_query_docs tool
+       - Status: ✅ RUNNING
+
+    2. **cortex-orchestrator** (coordinator role)
+       - Pod: cortex-orchestrator-*
+       - Purpose: Central routing and tool execution
+       - Uptime: 17+ hours
+       - Status: ✅ RUNNING
+
+    ### Defined But Not Active
+    1. **development-master** - Code analysis, testing, documentation
+    2. **security-master** - Vulnerability scanning, compliance (pod exists but sleeps)
+    3. **infrastructure-master** - Monitoring, deployment, optimization
+    4. **inventory-master** - Asset discovery, dependency mapping
+    5. **cicd-master** - Pipeline orchestration, build automation
+
+    ## MoE Routing Rules
+
+    **Confidence >= 100%**: Force tool
+    - Query: "Show UniFi devices"
+    - Keywords matched: "unifi", "device"
+    - Score: 200
+    - Action: FORCE cortex_query with client="unifi"
+
+    **Confidence >= 50%**: Hint tool
+    - Query: "What's the system status?"
+    - Keywords matched: "status"
+    - Score: 80
+    - Action: Hint to use cortex_get_status
+
+    **Confidence < 50%**: Let Claude decide
+    - Query: "How are things?"
+    - Keywords matched: None
+    - Score: 0
+    - Action: Claude uses natural intelligence
+
+    ## Deployment Structure
+
+    ### Namespaces
+    ```
+    cortex-system     - Infrastructure MCP servers, security, daemons
+    cortex            - Orchestrator, workers, queues, masters
+    cortex-chat       - Web UI (frontend, backend, proxy)
+    cortex-itil       - ITIL/ITSM services
+    cortex-autonomous - Autonomous operations
+    cortex-knowledge  - Knowledge management
+    cortex-service-desk - Service desk
+    mcp-servers       - Additional MCP servers
+    ```
+
+    ### Key Pods
+    ```
+    cortex namespace:
+    - cortex-orchestrator-* (1 replica)
+    - cortex-queue-worker-* (2 replicas)
+    - documentation-master-* (1 replica)
+    - redis-queue-* (1 replica)
+    - youtube-ingestion-* (1 replica)
+
+    cortex-chat namespace:
+    - cortex-chat-658f447774-* (frontend)
+    - cortex-chat-backend-simple-* (backend)
+    - cortex-chat-proxy-* (nginx)
+
+    cortex-system namespace:
+    - unifi-mcp-server-*
+    - proxmox-mcp-server-*
+    - sandfly-mcp-server-*
+    - cloudflare-mcp-server-*
+    - security-master-* (placeholder)
+    ```
+
+    ### Services
+    ```
+    cortex-orchestrator.cortex.svc.cluster.local:8000
+    redis-queue.cortex.svc.cluster.local:6379
+    documentation-master.cortex.svc.cluster.local:8080
+    unifi-mcp-server.cortex-system.svc.cluster.local:3000
+    proxmox-mcp-server.cortex-system.svc.cluster.local:3000
+    sandfly-mcp-server.cortex-system.svc.cluster.local:3000
+    ```
+
+    ## Data Persistence
+
+    ### Task Storage (Dual Persistence)
+    1. **Filesystem**: /app/tasks/{task-id}.json
+       - Available in orchestrator pod
+       - Available in worker pods
+       - Permanent storage
+
+    2. **Redis**: cortex:result:{task-id}
+       - 24-hour TTL
+       - Fast access
+       - Cached results
+
+    ### Queue Storage (Redis)
+    ```
+    cortex:queue:critical      - LPUSH/BRPOP
+    cortex:queue:high          - LPUSH/BRPOP
+    cortex:queue:medium        - LPUSH/BRPOP
+    cortex:queue:low           - LPUSH/BRPOP
+    cortex:queue:depth:{priority} - Queue depth metrics
+    cortex:tokens:minute       - Rate limiting
+    anthropic:global:token-usage - Token tracking
+    ```
+
+    ### Configuration Storage
+    - **K8s ConfigMaps**: Documentation, configuration
+    - **Local Files**: /Users/ryandahlberg/Projects/cortex/
+    - **GitHub**: https://github.com/ry-ops/cortex-k3s
+
+    ## Monitoring and Observability
+
+    ### Health Checks
+    ```bash
+    # Orchestrator health
+    curl http://cortex-orchestrator.cortex.svc.cluster.local:8000/health
+
+    # Queue status
+    curl http://cortex-orchestrator.cortex.svc.cluster.local:8000/api/queue/status
+
+    # Worker status
+    curl http://cortex-orchestrator.cortex.svc.cluster.local:8000/api/workers/status
+
+    # Metrics
+    curl http://cortex-orchestrator.cortex.svc.cluster.local:8000/metrics
+    ```
+
+    ### Logs
+    ```bash
+    # Orchestrator logs
+    kubectl logs -n cortex -l app=cortex-orchestrator --tail=100
+
+    # Worker logs
+    kubectl logs -n cortex -l app=cortex-queue-worker --tail=100
+
+    # Chat backend logs
+    kubectl logs -n cortex-chat -l app=cortex-chat-backend-simple --tail=100
+    ```
+
+    ### Redis Monitoring
+    ```bash
+    # Queue depths
+    kubectl exec -n cortex deploy/redis-queue -- redis-cli LLEN cortex:queue:high
+
+    # Token usage
+    kubectl exec -n cortex deploy/redis-queue -- redis-cli GET cortex:tokens:minute
+
+    # All Cortex keys
+    kubectl exec -n cortex deploy/redis-queue -- redis-cli KEYS "cortex:*"
+    ```
+
+    ## Scaling Operations
+
+    ### Scale Workers
+    ```bash
+    # Scale to 5 workers
+    kubectl scale deployment cortex-queue-worker -n cortex --replicas=5
+
+    # Verify
+    kubectl get pods -n cortex -l app=cortex-queue-worker
+    ```
+
+    ### Scale Orchestrator
+    ```bash
+    # NOT recommended - designed for 1 replica
+    # Orchestrator doesn't have distributed state management yet
+    ```
+
+    ### Add MCP Server
+    ```bash
+    # Deploy new MCP server
+    kubectl apply -f new-mcp-server.yaml
+
+    # Update orchestrator environment variables
+    kubectl set env deployment/cortex-orchestrator \
+      -n cortex NEW_MCP_URL=http://new-mcp-server:3000
+    ```
+
+    ## Troubleshooting Guide
+
+    ### Issue: Chat not responding
+    **Check**:
+    1. Frontend pod running? `kubectl get pods -n cortex-chat`
+    2. Backend pod running? `kubectl logs -n cortex-chat -l app=cortex-chat-backend-simple`
+    3. Orchestrator accessible? `kubectl exec -n cortex-chat deploy/cortex-chat-backend-simple -- curl -s http://cortex-orchestrator.cortex.svc.cluster.local:8000/health`
+
+    ### Issue: Task stuck in queue
+    **Check**:
+    1. Workers running? `kubectl get pods -n cortex -l app=cortex-queue-worker`
+    2. Redis accessible? `kubectl exec -n cortex deploy/cortex-orchestrator -- nc -zv redis-queue.cortex.svc.cluster.local 6379`
+    3. Queue depth? `kubectl exec -n cortex deploy/redis-queue -- redis-cli LLEN cortex:queue:medium`
+    4. Worker logs? `kubectl logs -n cortex -l app=cortex-queue-worker --tail=50`
+
+    ### Issue: Rate limit exceeded
+    **Check**:
+    1. Current usage? `kubectl exec -n cortex deploy/redis-queue -- redis-cli GET cortex:tokens:minute`
+    2. Wait 60 seconds for window reset
+    3. Consider scaling workers or adjusting rate limits
+
+    ### Issue: Tool execution fails
+    **Check**:
+    1. MCP server health? `curl http://unifi-mcp-server.cortex-system.svc.cluster.local:3000/health`
+    2. Direct API accessible? `kubectl exec -n cortex deploy/cortex-orchestrator -- curl -k https://10.88.140.16:443`
+    3. Credentials valid? Check environment variables in orchestrator pod
+
+    ## Security Considerations
+
+    ### API Keys
+    - **Anthropic API**: Set in orchestrator pod env (ANTHROPIC_API_KEY)
+    - **UniFi**: Set in MCP server or orchestrator
+    - **Proxmox**: Set in MCP server or orchestrator
+    - **Sandfly**: Set in MCP server or orchestrator
+
+    ### Network Access
+    - MCP servers: Internal k8s cluster networking only
+    - Chat interface: Public via Ingress (https://chat.ry-ops.dev)
+    - Orchestrator: Internal only (cortex-orchestrator.cortex.svc.cluster.local)
+
+    ### Rate Limiting
+    - Prevents token exhaustion
+    - Prevents API abuse
+    - Enforced at multiple layers
+
+    ## Performance Characteristics
+
+    ### Response Times (Observed)
+    - Simple query: <1 second
+    - Multi-tool query: 1-3 seconds
+    - Complex analysis: 3-10 seconds
+    - Task processing: 5-30 seconds (depends on complexity)
+
+    ### Throughput
+    - With 28k/min orchestrator limit: ~7-14 chat requests/minute
+    - With 40k/min worker limit: ~20-25 tasks/minute
+    - With 2 workers: 2 parallel tasks
+    - Scalable by adding more workers
+
+    ### Token Efficiency
+    - Average chat request: 2,000-4,000 tokens
+    - Average task: 2,000-10,000 tokens
+    - Test task observed: 61 tokens (very efficient!)
+
+    ## Next Steps for Users
+
+    ### Get Started
+    1. Open https://chat.ry-ops.dev
+    2. Try: "Show me pods in cortex namespace"
+    3. Try: "What's the UniFi network status?"
+    4. Try: "Create a task to scan for vulnerabilities"
+
+    ### Advanced Usage
+    1. Install local MCP server
+    2. Configure Claude Code or official Claude app
+    3. Use 11 Cortex tools directly
+    4. Build custom automation
+
+    ### Development
+    1. Clone: https://github.com/ry-ops/cortex-k3s
+    2. Read documentation in configmaps/
+    3. Explore orchestrator code
+    4. Deploy new MCP servers
+
+    ## Related Documentation
+
+    All documentation stored as k8s ConfigMaps in cortex namespace:
+
+    1. **cortex-workflows-doc** - Request flow and workflows
+    2. **cortex-tools-catalog** - All 17 tools reference
+    3. **llm-d-architecture-doc** - LLM daemon architecture
+    4. **cortex-task-processing-doc** - Task queue and workers
+    5. **cortex-moe-routing-doc** - MoE routing system
+    6. **cortex-integration-guide** (this document)
+
+    View any ConfigMap:
+    ```bash
+    kubectl get configmap -n cortex <name> -o jsonpath='{.data}'
+    ```
+
+    ## Summary
+
+    Cortex is a fully operational AI-powered infrastructure management system with:
+    - ✅ Web chat interface (https://chat.ry-ops.dev)
+    - ✅ 17 tools for infrastructure management
+    - ✅ Task queue system with workers
+    - ✅ MCP server architecture
+    - ✅ Rate limiting and token management
+    - ✅ Dual persistence (Redis + filesystem)
+    - ✅ Priority queue handling
+    - ✅ Documentation master integration
+    - ⚠️ MoE routing (defined but not fully active)
+    - ⚠️ Master agents (defined but mostly placeholders)
+
+    **Primary Access Method**: https://chat.ry-ops.dev
+
+    **Status**: Production-ready for infrastructure queries and task processing
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"integration-guide.md":"# Cortex System Integration Guide - Complete Reference\n\n**Created**: 2026-01-05\n**Purpose**: Master guide connecting all Cortex components\n**Audience**: Users, developers, operators\n\n## Quick Start: How to Use Cortex\n\n### Option 1: Chat Interface (Recommended)\n**URL**: https://chat.ry-ops.dev\n\n**What you can do**:\n1. Ask natural language questions\n2. Get infrastructure status\n3. Create and monitor tasks\n4. Query UniFi, Proxmox, Sandfly\n5. Access Kubernetes cluster info\n\n**Example queries**:\n```\n\"Show me all pods in the cortex namespace\"\n\"What's the UniFi network status?\"\n\"Check Sandfly for security alerts\"\n\"Create a task to scan all VMs for vulnerabilities\"\n\"Get the status of task-chat-1767612867490-4jpev431z\"\n```\n\n### Option 2: MCP Server (Local Development)\n**Location**: /Users/ryandahlberg/Projects/cortex/cortex-mcp-server\n\n**What you can do**:\n1. Connect via official Claude app\n2. Connect via Claude Code\n3. Use 11 Cortex tools\n4. Get MoE routing assistance\n\n**Start server**:\n```bash\ncd /Users/ryandahlberg/Projects/cortex/cortex-mcp-server\nnpm install\nnode src/index.js\n```\n\n**Configuration**: ~/.config/claude-code/mcp_settings.json\n\n### Option 3: Direct API (Advanced)\n**Orchestrator**: http://cortex-orchestrator.cortex.svc.cluster.local:8000\n\n**Available endpoints**:\n- POST /api/chat - Chat with Cortex\n- POST /execute-tool - Execute cortex_* tools\n- GET /health - Health check\n- GET /metrics - System metrics\n- GET /api/queue/status - Queue status\n- GET /api/workers/status - Worker status\n\n## Architecture Layers\n\n### Layer 1: User Interface\n```\nhttps://chat.ry-ops.dev (Web UI)\n     ↓\ncortex-chat-backend-simple (Pod)\n     ↓\nLayer 2...\n```\n\n### Layer 2: Orchestration\n```\ncortex-orchestrator (Pod)\n- Receives requests\n- Calls Claude API\n- Provides 17 tools to Claude\n- Routes tool executions\n- Returns responses\n     ↓\nLayer 3 (Tools) or Layer 4 (Tasks)...\n```\n\n### Layer 3: Tool Execution\n**17 Tools Available**:\n\n**Infrastructure Query (3 tools)**:\n1. kubectl - Kubernetes cluster queries\n2. get_infrastructure_summary - Complete overview\n3. proxmox_query - Proxmox VMs/containers\n\n**UniFi Network (3 tools)**:\n4. unifi_list_active_clients\n5. unifi_get_device_health\n6. unifi_get_client_activity\n\n**Sandfly Security (6 tools)**:\n7. sandfly_query\n8. sandfly_get_alerts\n9. sandfly_get_hosts\n10. sandfly_get_processes\n11. sandfly_trigger_scan\n12. sandfly_query_docs\n\n**Cortex Task Management (4 tools)**:\n13. cortex_create_task\n14. cortex_get_tasks\n15. cortex_get_task_status\n16. cortex_get_metrics\n\n**Cortex Agent Management (1 tool)**:\n17. cortex_list_agents\n\n### Layer 4: Task Processing\n```\nRedis Priority Queues\n- cortex:queue:critical\n- cortex:queue:high\n- cortex:queue:medium\n- cortex:queue:low\n     ↓\nQueue Workers (2 pods)\n- cortex-queue-worker-*\n- BRPOP from queues\n- Execute with Claude API\n- Store results\n     ↓\nResults storage (Dual persistence)\n```\n\n### Layer 5: Infrastructure Integration\n```\nMCP Servers (Internal)\n- unifi-mcp-server.cortex-system:3000\n- proxmox-mcp-server.cortex-system:3000\n- sandfly-mcp-server.cortex-system:3000\n\nDirect APIs (Fallback)\n- UniFi: 10.88.140.16:443\n- Proxmox: 10.88.140.21:8006\n- Sandfly: 10.88.140.176:443\n\nKubernetes\n- Via kubectl (in orchestrator pod)\n```\n\n## Complete Request Flow Examples\n\n### Example 1: Simple Query via Chat\n```\n1. User opens https://chat.ry-ops.dev\n2. User types: \"Show pods in cortex namespace\"\n3. Frontend sends POST to backend /api/chat\n4. Backend forwards to orchestrator /api/chat\n5. Orchestrator calls Claude API with:\n   - User message\n   - 17 tools available\n   - Max iterations: 50\n6. Claude responds with tool_use: kubectl\n   - command: \"get pods -n cortex\"\n7. Orchestrator executes kubectl command\n8. Orchestrator sends result back to Claude\n9. Claude formats response\n10. Response flows back: Orchestrator → Backend → Frontend → User\n\nTotal time: Sub-second\nTokens used: ~2,000-4,000\n```\n\n### Example 2: Task Creation and Processing\n```\n1. User types: \"Create a task to analyze security posture\"\n2. Claude selects: cortex_create_task tool\n3. Orchestrator creates task:\n   - ID: task-chat-{timestamp}-{random}\n   - Priority: medium\n   - Status: queued\n4. Dual persistence:\n   - Write to /app/tasks/{id}.json\n   - LPUSH to cortex:queue:medium\n5. Queue worker (one of 2 pods) uses BRPOP\n6. Worker picks up task within 5 seconds\n7. Worker checks rate limit (40k tokens/min)\n8. Worker calls Claude API to process task\n9. Worker stores result:\n   - Update /app/tasks/{id}.json\n   - Set Redis cortex:result:{id} (24h TTL)\n10. User queries: \"What's the status of task-chat-...\"\n11. Claude uses: cortex_get_task_status\n12. User sees completed task with results\n\nTotal time: 5-30 seconds\nTokens used: ~2,000-10,000\n```\n\n### Example 3: Multi-Tool Query\n```\n1. User: \"Give me complete infrastructure status\"\n2. Claude strategy: Use get_infrastructure_summary\n   OR chain multiple tools:\n   - kubectl (K8s)\n   - unifi_get_device_health (Network)\n   - proxmox_query (VMs)\n   - sandfly_get_alerts (Security)\n3. Orchestrator executes each tool sequentially\n4. Claude aggregates results\n5. Returns comprehensive report\n\nTotal time: 3-10 seconds\nTokens used: ~5,000-15,000\n```\n\n## Rate Limiting and Token Budgets\n\n### Orchestrator Throttle\n- **Limit**: 28,000 tokens/minute\n- **Storage**: Redis (anthropic:global:token-usage)\n- **Applies to**: Chat requests\n- **Behavior**: Reject request if exceeded\n\n### Worker Rate Limit\n- **Limit**: 40,000 tokens/minute\n- **Storage**: Redis (cortex:tokens:minute)\n- **Applies to**: Queued task processing\n- **Behavior**: Wait until window resets\n\n### Daily Budget\n- **Limit**: 270,000 tokens/day\n- **Location**: coordination/token-budget.json\n- **Tracked by**: MoE coordination system\n\n### Master Agent Budgets\n- Coordinator: 50,000 tokens\n- Development Master: 30,000 tokens\n- Security Master: 30,000 tokens\n- Inventory Master: 20,000 tokens\n- CI/CD Master: 20,000 tokens\n\n## Master Agents (MoE System)\n\n### Currently Active\n1. **documentation-master** (cortex namespace)\n   - Pod: documentation-master-5bf954f65f-dnss7\n   - Purpose: Query Sandfly documentation\n   - Endpoint: http://documentation-master.cortex.svc.cluster.local:8080\n   - Integration: sandfly_query_docs tool\n   - Status: ✅ RUNNING\n\n2. **cortex-orchestrator** (coordinator role)\n   - Pod: cortex-orchestrator-*\n   - Purpose: Central routing and tool execution\n   - Uptime: 17+ hours\n   - Status: ✅ RUNNING\n\n### Defined But Not Active\n1. **development-master** - Code analysis, testing, documentation\n2. **security-master** - Vulnerability scanning, compliance (pod exists but sleeps)\n3. **infrastructure-master** - Monitoring, deployment, optimization\n4. **inventory-master** - Asset discovery, dependency mapping\n5. **cicd-master** - Pipeline orchestration, build automation\n\n## MoE Routing Rules\n\n**Confidence \u003e= 100%**: Force tool\n- Query: \"Show UniFi devices\"\n- Keywords matched: \"unifi\", \"device\"\n- Score: 200\n- Action: FORCE cortex_query with client=\"unifi\"\n\n**Confidence \u003e= 50%**: Hint tool\n- Query: \"What's the system status?\"\n- Keywords matched: \"status\"\n- Score: 80\n- Action: Hint to use cortex_get_status\n\n**Confidence \u003c 50%**: Let Claude decide\n- Query: \"How are things?\"\n- Keywords matched: None\n- Score: 0\n- Action: Claude uses natural intelligence\n\n## Deployment Structure\n\n### Namespaces\n```\ncortex-system     - Infrastructure MCP servers, security, daemons\ncortex            - Orchestrator, workers, queues, masters\ncortex-chat       - Web UI (frontend, backend, proxy)\ncortex-itil       - ITIL/ITSM services\ncortex-autonomous - Autonomous operations\ncortex-knowledge  - Knowledge management\ncortex-service-desk - Service desk\nmcp-servers       - Additional MCP servers\n```\n\n### Key Pods\n```\ncortex namespace:\n- cortex-orchestrator-* (1 replica)\n- cortex-queue-worker-* (2 replicas)\n- documentation-master-* (1 replica)\n- redis-queue-* (1 replica)\n- youtube-ingestion-* (1 replica)\n\ncortex-chat namespace:\n- cortex-chat-658f447774-* (frontend)\n- cortex-chat-backend-simple-* (backend)\n- cortex-chat-proxy-* (nginx)\n\ncortex-system namespace:\n- unifi-mcp-server-*\n- proxmox-mcp-server-*\n- sandfly-mcp-server-*\n- cloudflare-mcp-server-*\n- security-master-* (placeholder)\n```\n\n### Services\n```\ncortex-orchestrator.cortex.svc.cluster.local:8000\nredis-queue.cortex.svc.cluster.local:6379\ndocumentation-master.cortex.svc.cluster.local:8080\nunifi-mcp-server.cortex-system.svc.cluster.local:3000\nproxmox-mcp-server.cortex-system.svc.cluster.local:3000\nsandfly-mcp-server.cortex-system.svc.cluster.local:3000\n```\n\n## Data Persistence\n\n### Task Storage (Dual Persistence)\n1. **Filesystem**: /app/tasks/{task-id}.json\n   - Available in orchestrator pod\n   - Available in worker pods\n   - Permanent storage\n\n2. **Redis**: cortex:result:{task-id}\n   - 24-hour TTL\n   - Fast access\n   - Cached results\n\n### Queue Storage (Redis)\n```\ncortex:queue:critical      - LPUSH/BRPOP\ncortex:queue:high          - LPUSH/BRPOP\ncortex:queue:medium        - LPUSH/BRPOP\ncortex:queue:low           - LPUSH/BRPOP\ncortex:queue:depth:{priority} - Queue depth metrics\ncortex:tokens:minute       - Rate limiting\nanthropic:global:token-usage - Token tracking\n```\n\n### Configuration Storage\n- **K8s ConfigMaps**: Documentation, configuration\n- **Local Files**: /Users/ryandahlberg/Projects/cortex/\n- **GitHub**: https://github.com/ry-ops/cortex-k3s\n\n## Monitoring and Observability\n\n### Health Checks\n```bash\n# Orchestrator health\ncurl http://cortex-orchestrator.cortex.svc.cluster.local:8000/health\n\n# Queue status\ncurl http://cortex-orchestrator.cortex.svc.cluster.local:8000/api/queue/status\n\n# Worker status\ncurl http://cortex-orchestrator.cortex.svc.cluster.local:8000/api/workers/status\n\n# Metrics\ncurl http://cortex-orchestrator.cortex.svc.cluster.local:8000/metrics\n```\n\n### Logs\n```bash\n# Orchestrator logs\nkubectl logs -n cortex -l app=cortex-orchestrator --tail=100\n\n# Worker logs\nkubectl logs -n cortex -l app=cortex-queue-worker --tail=100\n\n# Chat backend logs\nkubectl logs -n cortex-chat -l app=cortex-chat-backend-simple --tail=100\n```\n\n### Redis Monitoring\n```bash\n# Queue depths\nkubectl exec -n cortex deploy/redis-queue -- redis-cli LLEN cortex:queue:high\n\n# Token usage\nkubectl exec -n cortex deploy/redis-queue -- redis-cli GET cortex:tokens:minute\n\n# All Cortex keys\nkubectl exec -n cortex deploy/redis-queue -- redis-cli KEYS \"cortex:*\"\n```\n\n## Scaling Operations\n\n### Scale Workers\n```bash\n# Scale to 5 workers\nkubectl scale deployment cortex-queue-worker -n cortex --replicas=5\n\n# Verify\nkubectl get pods -n cortex -l app=cortex-queue-worker\n```\n\n### Scale Orchestrator\n```bash\n# NOT recommended - designed for 1 replica\n# Orchestrator doesn't have distributed state management yet\n```\n\n### Add MCP Server\n```bash\n# Deploy new MCP server\nkubectl apply -f new-mcp-server.yaml\n\n# Update orchestrator environment variables\nkubectl set env deployment/cortex-orchestrator \\\n  -n cortex NEW_MCP_URL=http://new-mcp-server:3000\n```\n\n## Troubleshooting Guide\n\n### Issue: Chat not responding\n**Check**:\n1. Frontend pod running? `kubectl get pods -n cortex-chat`\n2. Backend pod running? `kubectl logs -n cortex-chat -l app=cortex-chat-backend-simple`\n3. Orchestrator accessible? `kubectl exec -n cortex-chat deploy/cortex-chat-backend-simple -- curl -s http://cortex-orchestrator.cortex.svc.cluster.local:8000/health`\n\n### Issue: Task stuck in queue\n**Check**:\n1. Workers running? `kubectl get pods -n cortex -l app=cortex-queue-worker`\n2. Redis accessible? `kubectl exec -n cortex deploy/cortex-orchestrator -- nc -zv redis-queue.cortex.svc.cluster.local 6379`\n3. Queue depth? `kubectl exec -n cortex deploy/redis-queue -- redis-cli LLEN cortex:queue:medium`\n4. Worker logs? `kubectl logs -n cortex -l app=cortex-queue-worker --tail=50`\n\n### Issue: Rate limit exceeded\n**Check**:\n1. Current usage? `kubectl exec -n cortex deploy/redis-queue -- redis-cli GET cortex:tokens:minute`\n2. Wait 60 seconds for window reset\n3. Consider scaling workers or adjusting rate limits\n\n### Issue: Tool execution fails\n**Check**:\n1. MCP server health? `curl http://unifi-mcp-server.cortex-system.svc.cluster.local:3000/health`\n2. Direct API accessible? `kubectl exec -n cortex deploy/cortex-orchestrator -- curl -k https://10.88.140.16:443`\n3. Credentials valid? Check environment variables in orchestrator pod\n\n## Security Considerations\n\n### API Keys\n- **Anthropic API**: Set in orchestrator pod env (ANTHROPIC_API_KEY)\n- **UniFi**: Set in MCP server or orchestrator\n- **Proxmox**: Set in MCP server or orchestrator\n- **Sandfly**: Set in MCP server or orchestrator\n\n### Network Access\n- MCP servers: Internal k8s cluster networking only\n- Chat interface: Public via Ingress (https://chat.ry-ops.dev)\n- Orchestrator: Internal only (cortex-orchestrator.cortex.svc.cluster.local)\n\n### Rate Limiting\n- Prevents token exhaustion\n- Prevents API abuse\n- Enforced at multiple layers\n\n## Performance Characteristics\n\n### Response Times (Observed)\n- Simple query: \u003c1 second\n- Multi-tool query: 1-3 seconds\n- Complex analysis: 3-10 seconds\n- Task processing: 5-30 seconds (depends on complexity)\n\n### Throughput\n- With 28k/min orchestrator limit: ~7-14 chat requests/minute\n- With 40k/min worker limit: ~20-25 tasks/minute\n- With 2 workers: 2 parallel tasks\n- Scalable by adding more workers\n\n### Token Efficiency\n- Average chat request: 2,000-4,000 tokens\n- Average task: 2,000-10,000 tokens\n- Test task observed: 61 tokens (very efficient!)\n\n## Next Steps for Users\n\n### Get Started\n1. Open https://chat.ry-ops.dev\n2. Try: \"Show me pods in cortex namespace\"\n3. Try: \"What's the UniFi network status?\"\n4. Try: \"Create a task to scan for vulnerabilities\"\n\n### Advanced Usage\n1. Install local MCP server\n2. Configure Claude Code or official Claude app\n3. Use 11 Cortex tools directly\n4. Build custom automation\n\n### Development\n1. Clone: https://github.com/ry-ops/cortex-k3s\n2. Read documentation in configmaps/\n3. Explore orchestrator code\n4. Deploy new MCP servers\n\n## Related Documentation\n\nAll documentation stored as k8s ConfigMaps in cortex namespace:\n\n1. **cortex-workflows-doc** - Request flow and workflows\n2. **cortex-tools-catalog** - All 17 tools reference\n3. **llm-d-architecture-doc** - LLM daemon architecture\n4. **cortex-task-processing-doc** - Task queue and workers\n5. **cortex-moe-routing-doc** - MoE routing system\n6. **cortex-integration-guide** (this document)\n\nView any ConfigMap:\n```bash\nkubectl get configmap -n cortex \u003cname\u003e -o jsonpath='{.data}'\n```\n\n## Summary\n\nCortex is a fully operational AI-powered infrastructure management system with:\n- ✅ Web chat interface (https://chat.ry-ops.dev)\n- ✅ 17 tools for infrastructure management\n- ✅ Task queue system with workers\n- ✅ MCP server architecture\n- ✅ Rate limiting and token management\n- ✅ Dual persistence (Redis + filesystem)\n- ✅ Priority queue handling\n- ✅ Documentation master integration\n- ⚠️ MoE routing (defined but not fully active)\n- ⚠️ Master agents (defined but mostly placeholders)\n\n**Primary Access Method**: https://chat.ry-ops.dev\n\n**Status**: Production-ready for infrastructure queries and task processing\n"},"kind":"ConfigMap","metadata":{"annotations":{},"labels":{"app":"cortex","component":"documentation","type":"integration"},"name":"cortex-integration-guide","namespace":"cortex"}}
+  creationTimestamp: "2026-01-05T11:41:11Z"
+  labels:
+    app: cortex
+    component: documentation
+    type: integration
+  name: cortex-integration-guide
+  namespace: cortex
+  resourceVersion: "66202054"
+  uid: 04c0bb1a-e19a-4b36-bb84-426cf9a7f70d
