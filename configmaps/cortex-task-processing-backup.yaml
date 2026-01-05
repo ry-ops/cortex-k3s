@@ -1,0 +1,378 @@
+apiVersion: v1
+data:
+  task-processing.md: |
+    # Cortex Task Processing Architecture - Discovered Through Code Analysis
+
+    **Discovered**: 2026-01-05
+    **Source**: Live k8s cluster code examination
+
+    ## Complete Task Flow
+
+    ```
+    User Request (via chat or API)
+         ↓
+    Orchestrator receives cortex_create_task tool call
+         ↓
+    Task created with unique ID: task-chat-{timestamp}-{random}
+         ↓
+    DUAL PERSISTENCE:
+      1. Write to /app/tasks/{taskId}.json (filesystem)
+      2. LPUSH to Redis priority queue
+         ↓
+    Queue Workers (2 pods) use BRPOP to fetch tasks
+         ↓
+    Worker checks rate limit (40,000 tokens/minute)
+         ↓
+    Worker calls Claude API to execute task
+         ↓
+    Result stored:
+      1. File: /app/tasks/{taskId}.json (updated)
+      2. Redis: cortex:result:{taskId} (24h TTL)
+         ↓
+    User retrieves result via cortex_get_task_status
+    ```
+
+    ## Components
+
+    ### 1. Orchestrator (Task Creator)
+
+    **Pod**: cortex-orchestrator-*
+    **File**: /app/server.js
+    **Function**: handleCreateTask()
+
+    **Task Schema**:
+    ```json
+    {
+      "id": "task-chat-1704467123456-abc123",
+      "type": "user_query",
+      "priority": "medium",
+      "status": "queued",
+      "payload": {
+        "query": "User's task description",
+        "title": "Task title",
+        "category": "development|security|infrastructure|inventory|general"
+      },
+      "metadata": {
+        "created_at": "2026-01-05T12:00:00.000Z",
+        "updated_at": "2026-01-05T12:00:00.000Z",
+        "source": "chat",
+        "original_input": {}
+      },
+      "messages": [
+        {
+          "role": "user",
+          "content": "Task description"
+        }
+      ],
+      "estimatedTokens": 2000
+    }
+    ```
+
+    **Priority Mapping**:
+    - critical → Priority 1 → cortex:queue:critical
+    - high → Priority 3 → cortex:queue:high
+    - medium → Priority 5 → cortex:queue:medium
+    - low → Priority 7 → cortex:queue:low
+
+    **Dual Persistence Implementation**:
+    ```javascript
+    // 1. Write to filesystem
+    await fs.writeFile(`/app/tasks/${taskId}.json`, JSON.stringify(task, null, 2));
+
+    // 2. Push to Redis queue
+    const queueName = PRIORITY_QUEUES[priorityName];
+    await redisClient.lpush(queueName, JSON.stringify(task));
+
+    // 3. Update queue depth metric
+    const queueDepth = await redisClient.llen(queueName);
+    await redisClient.set(`cortex:queue:depth:${priorityName}`, queueDepth);
+    ```
+
+    ### 2. Redis Queues
+
+    **Service**: redis-queue.cortex.svc.cluster.local:6379
+
+    **Priority Queues** (in order):
+    ```
+    cortex:queue:critical  - Highest priority
+    cortex:queue:high      - High priority
+    cortex:queue:medium    - Default priority
+    cortex:queue:low       - Background tasks
+    ```
+
+    **Additional Keys**:
+    ```
+    cortex:queue:depth:critical     - Queue depth metric
+    cortex:queue:depth:high         - Queue depth metric
+    cortex:queue:depth:medium       - Queue depth metric
+    cortex:queue:depth:low          - Queue depth metric
+    cortex:result:{taskId}          - Task results (24h TTL)
+    cortex:tokens:minute            - Rate limit tracking (60s TTL)
+    ```
+
+    **Operation Pattern**:
+    - **Producer** (Orchestrator): Uses LPUSH to add tasks to front of queue
+    - **Consumer** (Workers): Use BRPOP to fetch from back (FIFO within priority)
+    - **Multi-queue BRPOP**: Workers check all queues in priority order
+
+    ### 3. Queue Workers
+
+    **Deployment**: cortex-queue-worker
+    **Replicas**: 2 pods currently running
+    **File**: /app/worker.js (237 lines)
+
+    **Key Features**:
+
+    #### A. Priority Processing
+    ```javascript
+    const PRIORITY_QUEUES = [
+      'cortex:queue:critical',
+      'cortex:queue:high',
+      'cortex:queue:medium',
+      'cortex:queue:low'
+    ];
+
+    // BRPOP checks all queues in order, returns first available
+    const result = await redis.brpop(...PRIORITY_QUEUES, 5);
+    ```
+
+    #### B. Rate Limiting
+    **Limit**: 40,000 tokens/minute (per worker? or global?)
+    **Key**: cortex:tokens:minute
+    **Window**: 60 seconds rolling
+
+    ```javascript
+    async checkRateLimit(estimatedTokens = 2000) {
+      const currentTokens = await redis.get('cortex:tokens:minute');
+      const tokensUsed = parseInt(currentTokens || '0');
+
+      if (tokensUsed + estimatedTokens > MAX_TOKENS_PER_MINUTE) {
+        const waitTime = 60 - Math.floor((Date.now() % 60000) / 1000);
+        console.log(`Rate limit reached, waiting ${waitTime}s...`);
+        await sleep(waitTime * 1000);
+        return this.checkRateLimit(estimatedTokens);
+      }
+    }
+
+    async trackTokenUsage(tokensUsed) {
+      await redis.incrby('cortex:tokens:minute', tokensUsed);
+      await redis.expire('cortex:tokens:minute', 60);
+    }
+    ```
+
+    #### C. Idle Timeout
+    **Timeout**: 5 minutes (300,000ms)
+    **Behavior**: Worker shuts down if no tasks for 5 minutes
+    **Purpose**: Resource conservation in k8s
+
+    ```javascript
+    checkIdleTimeout() {
+      const idleTime = Date.now() - this.lastTaskTime;
+      if (idleTime > IDLE_TIMEOUT) {
+        console.log('Idle for 5 minutes, shutting down...');
+        this.shutdown();
+      }
+    }
+    ```
+
+    #### D. Task Execution
+    ```javascript
+    async executeTask(task) {
+      // 1. Check rate limit
+      await this.checkRateLimit(task.estimatedTokens || 2000);
+
+      // 2. Call Claude API
+      const response = await anthropic.messages.create({
+        model: task.model || 'claude-sonnet-4-5-20250929',
+        max_tokens: task.maxTokens || 4096,
+        messages: task.messages
+      });
+
+      // 3. Track token usage
+      const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;
+      await this.trackTokenUsage(tokensUsed);
+
+      // 4. Dual persistence: File + Redis
+      await this.saveToDisk(task, result);
+      await redis.setex(`cortex:result:${task.id}`, 86400, JSON.stringify(result));
+
+      return result;
+    }
+    ```
+
+    #### E. Error Handling
+    - Catches execution errors
+    - Stores error details in same locations (disk + Redis)
+    - Logs error but doesn't crash worker
+    - Redis reconnection on connection loss
+
+    ## Task Lifecycle States
+
+    1. **queued** - Task created, in Redis queue
+    2. **processing** - Worker picked up task (implied by removal from queue)
+    3. **completed** - Result stored, success: true
+    4. **failed** - Result stored, success: false
+
+    ## Retrieval Tools
+
+    ### cortex_get_task_status
+    **Input**: `{task_id: "task-chat-..."}`
+    **Returns**:
+    ```json
+    {
+      "task_id": "task-chat-1704467123456-abc123",
+      "status": "completed",
+      "result": {
+        "success": true,
+        "response": "Claude's response text",
+        "tokensUsed": 1523,
+        "model": "claude-sonnet-4-5-20250929",
+        "completedAt": "2026-01-05T12:01:23.456Z"
+      },
+      "completedBy": "cortex-queue-worker-6764dc75cf-64psg"
+    }
+    ```
+
+    ### cortex_get_tasks
+    **Purpose**: List all tasks (from filesystem)
+    **Returns**: Array of task objects
+
+    ## Performance Characteristics
+
+    ### Observed Metrics
+    - **Queue Depth**: Currently 0 (all queues empty)
+    - **Workers**: 2 pods running
+    - **Processing Model**: Blocking BRPOP with 5-second timeout
+    - **Rate Limit**: 40,000 tokens/minute
+    - **Average Task**: ~2,000 tokens estimated, ~1,500-2,000 actual
+    - **Idle Timeout**: 5 minutes
+
+    ### Throughput Estimates
+    - **With rate limit**: ~20-25 tasks/minute (at 2k tokens each)
+    - **With 2 workers**: Parallel processing of 2 tasks simultaneously
+    - **Priority handling**: Critical tasks always processed first
+
+    ## Token Budget Comparison
+
+    **Worker Rate Limit**: 40,000 tokens/minute
+    **Orchestrator Throttle**: 28,000 tokens/minute (from previous docs)
+
+    **Question**: Are these separate limits or is there a mismatch?
+    - Orchestrator throttle applies to chat requests
+    - Worker rate limit applies to queued task processing
+    - May be intentionally separate systems
+
+    ## Directory Structure
+
+    ### Orchestrator
+    ```
+    /app/tasks/              - Task files (JSON)
+    /app/server.js           - Main orchestrator code
+    /app/token-throttle.js   - Rate limiting for chat
+    ```
+
+    ### Workers
+    ```
+    /app/tasks/              - Task files (JSON, shared concern)
+    /app/worker.js           - Worker implementation
+    /app/package.json        - Dependencies
+    ```
+
+    ## Testing the System
+
+    ### Create a Task
+    Via chat interface (https://chat.ry-ops.dev):
+    ```
+    User: "Can you create a task to analyze our security posture?"
+    Claude: *Uses cortex_create_task tool*
+    ```
+
+    Or direct API call to orchestrator:
+    ```bash
+    curl -X POST http://cortex-orchestrator.cortex.svc.cluster.local:8000/tool/cortex_create_task \
+      -H "Content-Type: application/json" \
+      -d '{
+        "title": "Security Analysis",
+        "description": "Analyze current security posture and provide recommendations",
+        "category": "security",
+        "priority": "high"
+      }'
+    ```
+
+    ### Monitor Queue
+    ```bash
+    # Check queue depths
+    kubectl exec -n cortex deploy/redis-queue -- redis-cli LLEN cortex:queue:high
+
+    # View queue contents (without removing)
+    kubectl exec -n cortex deploy/redis-queue -- redis-cli LRANGE cortex:queue:high 0 -1
+
+    # Check rate limit usage
+    kubectl exec -n cortex deploy/redis-queue -- redis-cli GET cortex:tokens:minute
+    ```
+
+    ### Check Task Status
+    Via chat:
+    ```
+    User: "What's the status of task task-chat-1704467123456-abc123?"
+    Claude: *Uses cortex_get_task_status tool*
+    ```
+
+    ### View Worker Logs
+    ```bash
+    kubectl logs -n cortex -l app=cortex-queue-worker --tail=100 -f
+    ```
+
+    ## Key Insights
+
+    1. **Dual Persistence**: All tasks stored in BOTH Redis queues AND filesystem
+       - Redis: For active processing, 24h result caching
+       - Filesystem: For persistence, history, debugging
+
+    2. **Priority System**: True priority queue implementation
+       - Workers use BRPOP across all queues in priority order
+       - Critical tasks always processed before lower priority
+
+    3. **Rate Limiting**: Two-tier system
+       - Orchestrator: 28k tokens/min for chat requests
+       - Workers: 40k tokens/min for queued tasks
+
+    4. **Resource Efficiency**: Workers auto-shutdown after 5 min idle
+       - K8s will restart if needed (via deployment)
+       - Conserves resources during low activity
+
+    5. **Scalability**: Easy to scale
+       - Add more worker replicas: `kubectl scale deployment cortex-queue-worker --replicas=5`
+       - Redis BRPOP handles multiple consumers correctly
+       - No coordination needed between workers
+
+    6. **Fault Tolerance**:
+       - Dual persistence prevents data loss
+       - Workers reconnect to Redis on connection loss
+       - Failed tasks stored with error details
+       - 24h result retention in Redis
+
+    ## Future Enhancements Identified
+
+    - [ ] Task progress updates (currently just queued → completed)
+    - [ ] Task cancellation mechanism
+    - [ ] Task prioritization adjustment after creation
+    - [ ] Worker health metrics (Prometheus integration?)
+    - [ ] Dead letter queue for repeatedly failing tasks
+    - [ ] Task dependencies (execute task B after task A completes)
+    - [ ] Scheduled/delayed task execution
+    - [ ] Bulk task operations
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"task-processing.md":"# Cortex Task Processing Architecture - Discovered Through Code Analysis\n\n**Discovered**: 2026-01-05\n**Source**: Live k8s cluster code examination\n\n## Complete Task Flow\n\n```\nUser Request (via chat or API)\n     ↓\nOrchestrator receives cortex_create_task tool call\n     ↓\nTask created with unique ID: task-chat-{timestamp}-{random}\n     ↓\nDUAL PERSISTENCE:\n  1. Write to /app/tasks/{taskId}.json (filesystem)\n  2. LPUSH to Redis priority queue\n     ↓\nQueue Workers (2 pods) use BRPOP to fetch tasks\n     ↓\nWorker checks rate limit (40,000 tokens/minute)\n     ↓\nWorker calls Claude API to execute task\n     ↓\nResult stored:\n  1. File: /app/tasks/{taskId}.json (updated)\n  2. Redis: cortex:result:{taskId} (24h TTL)\n     ↓\nUser retrieves result via cortex_get_task_status\n```\n\n## Components\n\n### 1. Orchestrator (Task Creator)\n\n**Pod**: cortex-orchestrator-*\n**File**: /app/server.js\n**Function**: handleCreateTask()\n\n**Task Schema**:\n```json\n{\n  \"id\": \"task-chat-1704467123456-abc123\",\n  \"type\": \"user_query\",\n  \"priority\": \"medium\",\n  \"status\": \"queued\",\n  \"payload\": {\n    \"query\": \"User's task description\",\n    \"title\": \"Task title\",\n    \"category\": \"development|security|infrastructure|inventory|general\"\n  },\n  \"metadata\": {\n    \"created_at\": \"2026-01-05T12:00:00.000Z\",\n    \"updated_at\": \"2026-01-05T12:00:00.000Z\",\n    \"source\": \"chat\",\n    \"original_input\": {}\n  },\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Task description\"\n    }\n  ],\n  \"estimatedTokens\": 2000\n}\n```\n\n**Priority Mapping**:\n- critical → Priority 1 → cortex:queue:critical\n- high → Priority 3 → cortex:queue:high\n- medium → Priority 5 → cortex:queue:medium\n- low → Priority 7 → cortex:queue:low\n\n**Dual Persistence Implementation**:\n```javascript\n// 1. Write to filesystem\nawait fs.writeFile(`/app/tasks/${taskId}.json`, JSON.stringify(task, null, 2));\n\n// 2. Push to Redis queue\nconst queueName = PRIORITY_QUEUES[priorityName];\nawait redisClient.lpush(queueName, JSON.stringify(task));\n\n// 3. Update queue depth metric\nconst queueDepth = await redisClient.llen(queueName);\nawait redisClient.set(`cortex:queue:depth:${priorityName}`, queueDepth);\n```\n\n### 2. Redis Queues\n\n**Service**: redis-queue.cortex.svc.cluster.local:6379\n\n**Priority Queues** (in order):\n```\ncortex:queue:critical  - Highest priority\ncortex:queue:high      - High priority\ncortex:queue:medium    - Default priority\ncortex:queue:low       - Background tasks\n```\n\n**Additional Keys**:\n```\ncortex:queue:depth:critical     - Queue depth metric\ncortex:queue:depth:high         - Queue depth metric\ncortex:queue:depth:medium       - Queue depth metric\ncortex:queue:depth:low          - Queue depth metric\ncortex:result:{taskId}          - Task results (24h TTL)\ncortex:tokens:minute            - Rate limit tracking (60s TTL)\n```\n\n**Operation Pattern**:\n- **Producer** (Orchestrator): Uses LPUSH to add tasks to front of queue\n- **Consumer** (Workers): Use BRPOP to fetch from back (FIFO within priority)\n- **Multi-queue BRPOP**: Workers check all queues in priority order\n\n### 3. Queue Workers\n\n**Deployment**: cortex-queue-worker\n**Replicas**: 2 pods currently running\n**File**: /app/worker.js (237 lines)\n\n**Key Features**:\n\n#### A. Priority Processing\n```javascript\nconst PRIORITY_QUEUES = [\n  'cortex:queue:critical',\n  'cortex:queue:high',\n  'cortex:queue:medium',\n  'cortex:queue:low'\n];\n\n// BRPOP checks all queues in order, returns first available\nconst result = await redis.brpop(...PRIORITY_QUEUES, 5);\n```\n\n#### B. Rate Limiting\n**Limit**: 40,000 tokens/minute (per worker? or global?)\n**Key**: cortex:tokens:minute\n**Window**: 60 seconds rolling\n\n```javascript\nasync checkRateLimit(estimatedTokens = 2000) {\n  const currentTokens = await redis.get('cortex:tokens:minute');\n  const tokensUsed = parseInt(currentTokens || '0');\n\n  if (tokensUsed + estimatedTokens \u003e MAX_TOKENS_PER_MINUTE) {\n    const waitTime = 60 - Math.floor((Date.now() % 60000) / 1000);\n    console.log(`Rate limit reached, waiting ${waitTime}s...`);\n    await sleep(waitTime * 1000);\n    return this.checkRateLimit(estimatedTokens);\n  }\n}\n\nasync trackTokenUsage(tokensUsed) {\n  await redis.incrby('cortex:tokens:minute', tokensUsed);\n  await redis.expire('cortex:tokens:minute', 60);\n}\n```\n\n#### C. Idle Timeout\n**Timeout**: 5 minutes (300,000ms)\n**Behavior**: Worker shuts down if no tasks for 5 minutes\n**Purpose**: Resource conservation in k8s\n\n```javascript\ncheckIdleTimeout() {\n  const idleTime = Date.now() - this.lastTaskTime;\n  if (idleTime \u003e IDLE_TIMEOUT) {\n    console.log('Idle for 5 minutes, shutting down...');\n    this.shutdown();\n  }\n}\n```\n\n#### D. Task Execution\n```javascript\nasync executeTask(task) {\n  // 1. Check rate limit\n  await this.checkRateLimit(task.estimatedTokens || 2000);\n\n  // 2. Call Claude API\n  const response = await anthropic.messages.create({\n    model: task.model || 'claude-sonnet-4-5-20250929',\n    max_tokens: task.maxTokens || 4096,\n    messages: task.messages\n  });\n\n  // 3. Track token usage\n  const tokensUsed = response.usage.input_tokens + response.usage.output_tokens;\n  await this.trackTokenUsage(tokensUsed);\n\n  // 4. Dual persistence: File + Redis\n  await this.saveToDisk(task, result);\n  await redis.setex(`cortex:result:${task.id}`, 86400, JSON.stringify(result));\n\n  return result;\n}\n```\n\n#### E. Error Handling\n- Catches execution errors\n- Stores error details in same locations (disk + Redis)\n- Logs error but doesn't crash worker\n- Redis reconnection on connection loss\n\n## Task Lifecycle States\n\n1. **queued** - Task created, in Redis queue\n2. **processing** - Worker picked up task (implied by removal from queue)\n3. **completed** - Result stored, success: true\n4. **failed** - Result stored, success: false\n\n## Retrieval Tools\n\n### cortex_get_task_status\n**Input**: `{task_id: \"task-chat-...\"}`\n**Returns**:\n```json\n{\n  \"task_id\": \"task-chat-1704467123456-abc123\",\n  \"status\": \"completed\",\n  \"result\": {\n    \"success\": true,\n    \"response\": \"Claude's response text\",\n    \"tokensUsed\": 1523,\n    \"model\": \"claude-sonnet-4-5-20250929\",\n    \"completedAt\": \"2026-01-05T12:01:23.456Z\"\n  },\n  \"completedBy\": \"cortex-queue-worker-6764dc75cf-64psg\"\n}\n```\n\n### cortex_get_tasks\n**Purpose**: List all tasks (from filesystem)\n**Returns**: Array of task objects\n\n## Performance Characteristics\n\n### Observed Metrics\n- **Queue Depth**: Currently 0 (all queues empty)\n- **Workers**: 2 pods running\n- **Processing Model**: Blocking BRPOP with 5-second timeout\n- **Rate Limit**: 40,000 tokens/minute\n- **Average Task**: ~2,000 tokens estimated, ~1,500-2,000 actual\n- **Idle Timeout**: 5 minutes\n\n### Throughput Estimates\n- **With rate limit**: ~20-25 tasks/minute (at 2k tokens each)\n- **With 2 workers**: Parallel processing of 2 tasks simultaneously\n- **Priority handling**: Critical tasks always processed first\n\n## Token Budget Comparison\n\n**Worker Rate Limit**: 40,000 tokens/minute\n**Orchestrator Throttle**: 28,000 tokens/minute (from previous docs)\n\n**Question**: Are these separate limits or is there a mismatch?\n- Orchestrator throttle applies to chat requests\n- Worker rate limit applies to queued task processing\n- May be intentionally separate systems\n\n## Directory Structure\n\n### Orchestrator\n```\n/app/tasks/              - Task files (JSON)\n/app/server.js           - Main orchestrator code\n/app/token-throttle.js   - Rate limiting for chat\n```\n\n### Workers\n```\n/app/tasks/              - Task files (JSON, shared concern)\n/app/worker.js           - Worker implementation\n/app/package.json        - Dependencies\n```\n\n## Testing the System\n\n### Create a Task\nVia chat interface (https://chat.ry-ops.dev):\n```\nUser: \"Can you create a task to analyze our security posture?\"\nClaude: *Uses cortex_create_task tool*\n```\n\nOr direct API call to orchestrator:\n```bash\ncurl -X POST http://cortex-orchestrator.cortex.svc.cluster.local:8000/tool/cortex_create_task \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"title\": \"Security Analysis\",\n    \"description\": \"Analyze current security posture and provide recommendations\",\n    \"category\": \"security\",\n    \"priority\": \"high\"\n  }'\n```\n\n### Monitor Queue\n```bash\n# Check queue depths\nkubectl exec -n cortex deploy/redis-queue -- redis-cli LLEN cortex:queue:high\n\n# View queue contents (without removing)\nkubectl exec -n cortex deploy/redis-queue -- redis-cli LRANGE cortex:queue:high 0 -1\n\n# Check rate limit usage\nkubectl exec -n cortex deploy/redis-queue -- redis-cli GET cortex:tokens:minute\n```\n\n### Check Task Status\nVia chat:\n```\nUser: \"What's the status of task task-chat-1704467123456-abc123?\"\nClaude: *Uses cortex_get_task_status tool*\n```\n\n### View Worker Logs\n```bash\nkubectl logs -n cortex -l app=cortex-queue-worker --tail=100 -f\n```\n\n## Key Insights\n\n1. **Dual Persistence**: All tasks stored in BOTH Redis queues AND filesystem\n   - Redis: For active processing, 24h result caching\n   - Filesystem: For persistence, history, debugging\n\n2. **Priority System**: True priority queue implementation\n   - Workers use BRPOP across all queues in priority order\n   - Critical tasks always processed before lower priority\n\n3. **Rate Limiting**: Two-tier system\n   - Orchestrator: 28k tokens/min for chat requests\n   - Workers: 40k tokens/min for queued tasks\n\n4. **Resource Efficiency**: Workers auto-shutdown after 5 min idle\n   - K8s will restart if needed (via deployment)\n   - Conserves resources during low activity\n\n5. **Scalability**: Easy to scale\n   - Add more worker replicas: `kubectl scale deployment cortex-queue-worker --replicas=5`\n   - Redis BRPOP handles multiple consumers correctly\n   - No coordination needed between workers\n\n6. **Fault Tolerance**:\n   - Dual persistence prevents data loss\n   - Workers reconnect to Redis on connection loss\n   - Failed tasks stored with error details\n   - 24h result retention in Redis\n\n## Future Enhancements Identified\n\n- [ ] Task progress updates (currently just queued → completed)\n- [ ] Task cancellation mechanism\n- [ ] Task prioritization adjustment after creation\n- [ ] Worker health metrics (Prometheus integration?)\n- [ ] Dead letter queue for repeatedly failing tasks\n- [ ] Task dependencies (execute task B after task A completes)\n- [ ] Scheduled/delayed task execution\n- [ ] Bulk task operations\n"},"kind":"ConfigMap","metadata":{"annotations":{},"labels":{"app":"cortex","component":"documentation","type":"task-processing"},"name":"cortex-task-processing-doc","namespace":"cortex"}}
+  creationTimestamp: "2026-01-05T11:33:47Z"
+  labels:
+    app: cortex
+    component: documentation
+    type: task-processing
+  name: cortex-task-processing-doc
+  namespace: cortex
+  resourceVersion: "66176296"
+  uid: 9d941b7e-5133-457f-a60f-335d86b3e48a
