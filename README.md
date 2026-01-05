@@ -1,172 +1,257 @@
-# Cortex
+# Cortex K8s Documentation
 
-[![Security Scan](https://github.com/ry-ops/cortex/actions/workflows/security-scan.yml/badge.svg)](https://github.com/ry-ops/cortex/actions/workflows/security-scan.yml)
+**Official documentation repository for Cortex infrastructure management system**
 
-Multi-agent AI system for autonomous GitHub repository management.
+## Overview
 
-## What It Does
+This repository contains comprehensive documentation for the Cortex system, discovered and documented through extensive testing of the deployed Kubernetes infrastructure.
 
-Cortex automates repository workflows using a master-worker architecture. Master agents (Coordinator, Development, Security, Inventory, CI/CD) route tasks to specialized workers that handle implementation, testing, scanning, fixes, and documentation.
+All documentation is stored as Kubernetes ConfigMaps in the `cortex` namespace and backed up here for version control and reference.
+
+## Quick Links
+
+- **Primary Access**: https://chat.ry-ops.dev
+- **System Status**: Production-ready and operational
+- **Last Updated**: 2026-01-05
+
+## Documentation Index
+
+All documents stored in `configmaps/` directory:
+
+### 1. 8-Hour Exploration Summary (25KB) - START HERE
+**File**: `8-hour-exploration-summary-backup.yaml`  
+**Purpose**: Executive summary of entire exploration
+
+**Contents**:
+- Mission and approach
+- 8 key discoveries
+- Complete testing results
+- Performance metrics
+- Deployment architecture
+- Key insights and recommendations
+
+**Use this to**: Get high-level understanding of Cortex system
+
+### 2. Cortex Integration Guide (32KB) - MASTER REFERENCE
+**File**: `cortex-integration-guide-backup.yaml`  
+**Purpose**: Complete reference connecting all components
+
+**Contents**:
+- Quick start (3 access methods)
+- Complete architecture layers (1-5)
+- Request flow examples with timing
+- Rate limiting and token budgets
+- Deployment structure
+- Monitoring and observability
+- Troubleshooting guide
+- Security considerations
+
+**Use this to**: Understand how everything connects and how to use Cortex
+
+### 3. Cortex Workflows (18KB)
+**File**: `cortex-workflows-backup.yaml`  
+**Purpose**: Real workflow documentation
+
+**Contents**:
+- Architecture overview
+- Component connections
+- Detailed workflow examples
+- Redis queue management
+- Token throttle system
+- Current system status
+
+**Use this to**: Understand how requests flow through the system
+
+### 4. Cortex Tools Catalog (14KB)
+**File**: `cortex-tools-catalog-backup.yaml`  
+**Purpose**: Complete catalog of all 17 tools
+
+**Contents**:
+- Tool categories
+- Infrastructure Query (3 tools)
+- UniFi Network (3 tools)
+- Sandfly Security (6 tools)
+- Task Management (4 tools)
+- Agent Management (1 tool)
+- Usage examples
+
+**Use this to**: Reference available tools and their capabilities
+
+### 5. LLM-D Architecture (9.6KB)
+**File**: `llm-d-architecture-backup.yaml`  
+**Purpose**: LLM Daemon architecture (discovered = Orchestrator)
+
+**Contents**:
+- What is LLM-D (Orchestrator pod)
+- Request flow
+- Token management
+- Caching strategy
+- Tool execution
+- Observable behavior
+
+**Use this to**: Understand the core orchestrator component
+
+### 6. Task Processing (22KB)
+**File**: `cortex-task-processing-backup.yaml`  
+**Purpose**: Task queue and worker processing
+
+**Contents**:
+- Complete task lifecycle
+- Dual persistence (Redis + filesystem)
+- Priority queue implementation
+- Rate limiting (40k tokens/min)
+- Worker auto-shutdown
+- Testing examples
+
+**Use this to**: Understand how tasks are created and processed
+
+### 7. MoE Routing (28KB)
+**File**: `cortex-moe-routing-backup.yaml`  
+**Purpose**: Mixture of Experts routing system
+
+**Contents**:
+- 6-tier routing system
+- Keyword-based confidence scoring
+- Master agent definitions
+- Routing algorithm
+- Token budget allocations
+- Implementation state
+
+**Use this to**: Understand the routing and master agent architecture
 
 ## Quick Start
 
-```bash
-# Install worker daemon (one-time setup)
-./scripts/daemon-control.sh install
-
-# Start a master agent
-./scripts/run-coordinator-master.sh
-./scripts/run-security-master.sh
-./scripts/run-development-master.sh
-./scripts/run-inventory-master.sh
-
-# Check system status
-./scripts/status-check.sh
-
-# View active workers
-./scripts/worker-status.sh
+### Option 1: Chat Interface (Recommended)
+```
+1. Open: https://chat.ry-ops.dev
+2. Ask: "Show me pods in cortex namespace"
+3. Try: "What's the UniFi network status?"
+4. Create task: "Create a task to scan for vulnerabilities"
 ```
 
-## Architecture
-
-### Organizational Structure
-Cortex operates as **Cortex Holdings** - a multi-divisional organization using a construction company model:
-- **Executive Level**: Cortex Prime (meta-agent), COO (orchestrator)
-- **Shared Services**: Coordinator, Development, Security, Inventory, CI/CD
-- **Divisions**: 6 specialized divisions managing 20 repositories
-  - Infrastructure (Proxmox, UniFi, Cloudflare, Starlink)
-  - Containers (Talos)
-  - Workflows (n8n)
-  - Configuration (Microsoft Graph)
-  - Monitoring (Netdata, Grafana, CheckMK, Pulseway)
-  - Intelligence (AIANA)
-
-See [Cortex Holdings Structure](./coordination/divisions/README.md) for complete organizational details.
-
-### Technical Architecture
-
-**5 Master Agents:**
-- Coordinator - Routes tasks using MoE pattern matching
-- Development - Feature implementation, bug fixes
-- Security - CVE detection and remediation
-- Inventory - Repository cataloging
-- CI/CD - Build automation and deployment
-
-**7 Worker Types:**
-- Implementation, Fix, Test, Scan, Security Fix, Documentation, Analysis
-
-**9 Daemons:**
-- Core: Coordinator, Worker, PM
-- Self-healing: Heartbeat Monitor, Zombie Cleanup, Worker Restart, Failure Pattern Detection, Auto-Fix
-- Monitoring: Dashboard Server
-
-**Key Components:**
-- Token budget management (200k daily)
-- File-based coordination (JSON/JSONL)
-- **Observability Pipeline** - Complete event processing and analytics (NEW!)
-- Elastic APM for observability
-- PyTorch neural routing
-- RAG system with vector search
-- Governance framework
-
-## Observability Pipeline
-
-Production-ready event processing pipeline with 94 tests passing:
-
-**Architecture:** Sources → Processors → Destinations → API → Dashboard
-
-**Components:**
-- **4 Processors**: Enrich, Filter, Sample, Redact PII
-- **5 Destinations**: PostgreSQL, S3, Webhook, JSONL, Console
-- **REST API**: 15+ endpoints for querying and analytics
-- **Dashboard**: Real-time monitoring web interface
-
-**Quick Start:**
+### Option 2: View Documentation in K8s
 ```bash
-# Start observability API server
-node -e "
-const { ObservabilityAPIServer, PostgreSQLDataSource } = require('./lib/observability/api');
-const dataSource = new PostgreSQLDataSource({
-  host: 'localhost',
-  database: 'cortex_observability',
-  user: 'postgres',
-  password: process.env.POSTGRES_PASSWORD
-});
-const server = new ObservabilityAPIServer({ port: 3001, dataSource });
-(async () => {
-  await dataSource.initialize();
-  await server.start();
-  console.log('Dashboard: http://localhost:3001');
-})();
-"
+# List all ConfigMaps
+kubectl get configmaps -n cortex -l component=documentation
+
+# View a specific doc
+kubectl get configmap -n cortex cortex-integration-guide -o jsonpath='{.data.integration-guide\.md}'
+
+# Or use kubectl describe
+kubectl describe configmap -n cortex 8-hour-exploration-summary
 ```
 
-**Features:**
-- PII redaction (7 types: email, phone, SSN, API keys, etc.)
-- Intelligent sampling (100% errors, 10% successes)
-- Cost tracking and analysis
-- Full-text search
-- Time-series aggregations
-- PostgreSQL storage with optimized indexes
-- S3 archival with compression (60-80% reduction)
-- Webhook integrations (Slack, PagerDuty, etc.)
-
-**Documentation:**
-- [Weeks 1-2: Pipeline Framework](./docs/observability-pipeline-weeks-1-2.md)
-- [Weeks 3-4: Processors](./docs/observability-pipeline-weeks-3-4.md)
-- [Weeks 5-6: Destinations](./docs/observability-pipeline-weeks-5-6.md)
-- [Weeks 7-8: Search API & Dashboard](./docs/observability-pipeline-weeks-7-8.md)
-
-## Common Commands
-
+### Option 3: Read from GitHub
 ```bash
-# Daemon management
-./scripts/daemon-control.sh status
-./scripts/daemon-control.sh logs
-./scripts/daemon-control.sh restart
+# Clone this repo
+git clone https://github.com/ry-ops/cortex-k3s.git
+cd cortex-k3s/configmaps
 
-# System monitoring
-./scripts/system-live.sh              # Real-time dashboard
-./scripts/worker-monitor.sh           # Worker status
-./scripts/task-queue-monitor.sh       # Task queue
-
-# Debugging
-./scripts/debug-helper.sh             # Interactive troubleshooting
-cat coordination/task-queue.json | jq
-cat coordination/worker-pool.json | jq
+# View any doc with your favorite editor
+cat 8-hour-exploration-summary-backup.yaml
 ```
 
-## Coordination Files
+## System Architecture
 
-All agent communication happens through files in `coordination/`:
-- `task-queue.json` - Task assignments
-- `worker-pool.json` - Active workers
-- `token-budget.json` - Budget tracking
-- `repository-inventory.json` - Repo catalog
-- `dashboard-events.jsonl` - Event stream
+```
+User (Browser)
+     ↓
+https://chat.ry-ops.dev (Nginx)
+     ↓
+Backend (cortex-chat-backend-simple:8080)
+     ↓
+Orchestrator (cortex-orchestrator:8000)
+     ↓
+Claude API (api.anthropic.com)
+     ↓
+17 Tools → MCP Servers / Direct APIs
+     ↓
+Infrastructure (UniFi, Proxmox, Sandfly, K8s)
+```
 
-## Documentation
+## Key Components
 
-### Organizational
-- [Cortex Holdings Structure](./coordination/divisions/CORTEX_HOLDINGS.md) - Complete organizational chart
-- [Divisions Quick Reference](./coordination/divisions/README.md) - Construction company model
+- **Orchestrator**: Central coordinator (cortex-orchestrator pod)
+- **Queue Workers**: Task processors (2 replicas)
+- **Redis**: Priority queues and caching
+- **MCP Servers**: UniFi, Proxmox, Sandfly integration
+- **Documentation Master**: Active master agent for Sandfly docs
 
-### Technical
-- [Master-Worker Architecture](./docs/master-worker-architecture.md) - Technical architecture details
-- [API Reference](./docs/API-REFERENCE.md) - API documentation
-- [Governance Framework](./docs/governance-framework.md) - Policies and procedures
-- [Runbooks](./docs/) - Operational guides
+## System Status
 
-## Monitoring
+**Production Ready**: ✅  
+**Chat Interface**: ✅ Working  
+**17 Tools**: ✅ Functional  
+**Task Processing**: ✅ Verified (test task: 61 tokens!)  
+**MCP Servers**: ✅ Healthy  
+**Rate Limiting**: ✅ Active  
 
-- Elastic APM: https://cloud.elastic.co
-- Dashboard: http://localhost:3000 (when running)
-- API endpoints: 128 instrumented REST endpoints
+## Documentation Stats
 
-## Status
+- **Total ConfigMaps**: 7
+- **Total Size**: 148KB
+- **Created**: 2026-01-05
+- **Method**: Deployed system testing (not local file reading)
+- **Tokens Used**: ~85,000 tokens
+- **Testing**: End-to-end workflows verified
 
-Production-ready. 94% worker success rate.
+## How to Use This Documentation
+
+**If you're new to Cortex**:
+1. Start with: `8-hour-exploration-summary-backup.yaml`
+2. Then read: `cortex-integration-guide-backup.yaml`
+3. Explore specific topics as needed
+
+**If you're an operator**:
+1. Reference: `cortex-integration-guide-backup.yaml` (troubleshooting, scaling)
+2. Monitor: `cortex-workflows-backup.yaml` (request flows)
+3. Debug: `cortex-task-processing-backup.yaml` (task issues)
+
+**If you're a developer**:
+1. Architecture: `llm-d-architecture-backup.yaml`
+2. Tools: `cortex-tools-catalog-backup.yaml`
+3. MoE: `cortex-moe-routing-backup.yaml`
+
+## Deploying ConfigMaps
+
+To deploy these ConfigMaps to your cluster:
+
+```bash
+# Deploy all ConfigMaps
+kubectl apply -f configmaps/
+
+# Deploy a specific ConfigMap
+kubectl apply -f configmaps/cortex-integration-guide-backup.yaml
+
+# Verify
+kubectl get configmaps -n cortex -l component=documentation
+```
+
+## Contributing
+
+This documentation was generated through:
+1. Testing deployed k8s infrastructure
+2. Examining running pods and services
+3. Testing actual workflows
+4. Verifying all tools and endpoints
+5. Creating end-to-end test tasks
+
+To update:
+1. Test changes in deployed environment
+2. Update corresponding ConfigMap YAML
+3. Apply to cluster: `kubectl apply -f configmaps/NAME.yaml`
+4. Commit and push to this repo
 
 ## License
 
-MIT
+Internal documentation for Cortex infrastructure management system.
+
+## Contact
+
+For access to Cortex system: https://chat.ry-ops.dev
+
+---
+
+**Generated with Claude Code**  
+**Last Updated**: 2026-01-05  
+**Status**: ✅ Complete and operational
