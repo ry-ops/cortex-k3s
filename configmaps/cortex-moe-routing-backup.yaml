@@ -1,0 +1,442 @@
+apiVersion: v1
+data:
+  moe-routing.md: |
+    # Cortex MoE (Mixture of Experts) Routing Architecture
+
+    **Discovered**: 2026-01-05
+    **Sources**: Local MCP server code + k8s cluster examination
+
+    ## What is MoE Routing?
+
+    MoE (Mixture of Experts) is an intelligent routing system that:
+    1. Analyzes incoming queries using keyword matching
+    2. Scores potential routes based on confidence
+    3. Selects the best tool/client/master for the task
+    4. Routes work to specialized agents (experts)
+
+    ## Architecture Overview
+
+    ```
+    User Query
+         ↓
+    MoE Router analyzes keywords
+         ↓
+    Confidence scoring (0-100%)
+         ↓
+    If confidence >= 100%: FORCE tool selection
+    If confidence >= 50%: HINT to Claude which tool to use
+    If confidence < 50%: Let Claude decide
+         ↓
+    Selected Expert executes task
+    ```
+
+    ## 6-Tier Routing System
+
+    ### Tier 1: Infrastructure Query (cortex_query)
+    **Priority**: 100
+    **Purpose**: Direct queries to infrastructure clients
+
+    **Routes**:
+    1. **unifi** - UniFi network management
+       - Keywords: unifi, network, wifi, wireless, ssid, access point, ap, client, device connected
+       - Client: unifi
+       - Use case: "Show me UniFi device health"
+
+    2. **proxmox** - Proxmox virtualization
+       - Keywords: proxmox, vm, virtual machine, container, lxc, pve, hypervisor, node resource
+       - Client: proxmox
+       - Use case: "List all VMs on Proxmox"
+
+    3. **sandfly** - Sandfly security monitoring
+       - Keywords: sandfly, security, alert, vulnerability, threat, intrusion, rootkit, malware, forensic, security scan
+       - Client: sandfly
+       - Use case: "Check Sandfly alerts"
+
+    4. **kubernetes** - Kubernetes cluster
+       - Keywords: k8s, kubernetes, pod, deployment, service, namespace, kubectl, container, cluster
+       - Client: k8s
+       - Use case: "Show pods in cortex namespace"
+
+    ### Tier 2: Infrastructure Management (cortex_manage_infrastructure)
+    **Priority**: 90
+    **Purpose**: Modify/manage infrastructure
+
+    **Routes**:
+    1. **infrastructure_manage** - Infrastructure operations
+       - Keywords: create vm, delete vm, manage container, scale deployment, create pod
+       - Use case: "Scale cortex-orchestrator to 3 replicas"
+
+    ### Tier 3: Worker Swarms (cortex_spawn_workers)
+    **Priority**: 95
+    **Purpose**: Spawn parallel workers for large tasks
+
+    **Routes**:
+    1. **worker_spawn** - Worker orchestration
+       - Keywords: spawn worker, create worker, worker swarm, parallel workers, worker pool
+       - Use case: "Spawn 10 implementation workers"
+
+    ### Tier 4: Master Coordination (cortex_coordinate_masters)
+    **Priority**: 95
+    **Purpose**: Route tasks to specialized master agents
+
+    **Routes**:
+    1. **master_coordinate** - Master agent routing
+       - Keywords: coordinate master, route task, master agent, handoff, delegate task
+       - Use case: "Route this security task to the security master"
+
+    ### Tier 5: Project Builds (cortex_build_project)
+    **Priority**: 85
+    **Purpose**: Large-scale project building
+
+    **Routes**:
+    1. **project_build** - Project construction
+       - Keywords: build project, create microservice, build application, full build, project
+       - Use case: "Build 50 REST API microservices"
+
+    ### Tier 6: Control & Monitoring
+    **Priority**: 80-100
+    **Purpose**: System control and status
+
+    **Routes**:
+    1. **system_control** (cortex_control) - Priority: 100
+       - Keywords: pause, resume, cancel, stop operation, abort
+       - Use case: "Pause all workers"
+
+    2. **system_status** (cortex_get_status) - Priority: 80
+       - Keywords: status, health, metrics, monitoring, system state
+       - Use case: "Show system status"
+
+    ## Routing Algorithm
+
+    ### 1. Keyword Matching
+    ```javascript
+    function routeQuery(query) {
+      const lowerQuery = query.toLowerCase();
+      const scores = {};
+
+      // Score each route
+      for (const [name, route] of Object.entries(MoE_ROUTES)) {
+        let score = 0;
+        const matchedKeywords = [];
+
+        for (const keyword of route.keywords) {
+          if (lowerQuery.includes(keyword)) {
+            score += route.priority;  // Each keyword adds priority points
+            matchedKeywords.push(keyword);
+          }
+        }
+
+        if (score > 0) {
+          scores[name] = {
+            tool: route.tool,
+            client: route.client,
+            tier: route.tier,
+            score,
+            confidence: Math.min(score / 100, 1.0),
+            matchedKeywords
+          };
+        }
+      }
+
+      // Return highest scoring route
+      return sortByScore(scores)[0];
+    }
+    ```
+
+    ### 2. Confidence Thresholds
+
+    **confidence >= 1.0 (100%)**: FORCE tool selection
+    - Multiple keyword matches
+    - MCP server forces Claude to use this tool
+    - Example: Query contains "unifi" + "network" → Force cortex_query with unifi client
+
+    **confidence >= 0.5 (50-99%)**: HINT to system
+    - Some keyword matches
+    - Add hint to system message
+    - Claude can still choose different tool if needed
+    - Example: Query contains "status" → Hint: Consider using cortex_get_status
+
+    **confidence < 0.5 (0-49%)**: Let Claude decide
+    - Weak or no keyword matches
+    - Claude uses natural intelligence to select tool
+    - Example: "What's going on?" → No routing hints
+
+    ### 3. Multi-Match Handling
+
+    When multiple routes match:
+    1. Calculate score for each route (priority × matched_keywords)
+    2. Sort by score descending
+    3. Select highest scoring route
+    4. Return all matches for analysis
+
+    ## Master Agents
+
+    ### Defined Masters (from orchestrator)
+
+    #### 1. development-master
+    - **Category**: development
+    - **Capabilities**: code_analysis, testing, documentation, code_generation
+    - **Token Budget**: Unknown
+    - **Status**: Defined but not deployed
+
+    #### 2. security-master
+    - **Category**: security
+    - **Capabilities**: vulnerability_scan, compliance_check, threat_analysis
+    - **Token Budget**: 35,000 tokens
+    - **Status**: Pod exists (cortex-system namespace) but only sleeps
+    - **Pod**: security-master-7bb9d59d-s7nck
+
+    #### 3. infrastructure-master
+    - **Category**: infrastructure
+    - **Capabilities**: monitoring, deployment, configuration, optimization
+    - **Token Budget**: Unknown
+    - **Status**: Defined but not deployed
+
+    #### 4. inventory-master
+    - **Category**: inventory
+    - **Capabilities**: asset_discovery, dependency_mapping, license_management
+    - **Token Budget**: Unknown
+    - **Status**: Defined but not deployed
+
+    #### 5. cicd-master
+    - **Category**: cicd
+    - **Capabilities**: pipeline_orchestration, build, test_automation, deployment
+    - **Token Budget**: Unknown
+    - **Status**: Defined but not deployed
+
+    #### 6. documentation-master (ACTIVE!)
+    - **Category**: documentation
+    - **Capabilities**: documentation_query, knowledge_base, contextual_help
+    - **Status**: RUNNING in cortex namespace
+    - **Pod**: documentation-master-5bf954f65f-dnss7
+    - **Port**: 8080
+    - **URL**: http://documentation-master.cortex.svc.cluster.local:8080
+    - **Integration**: Used by sandfly_query_docs tool
+    - **Features**:
+      - Knowledge base at /data/kb
+      - Cache at /data/cache
+      - Periodic crawler jobs (every 24 hours)
+      - Sandfly documentation indexing
+
+    ### Coordinator
+    - **ID**: cortex-orchestrator
+    - **Type**: coordinator (not a master)
+    - **Role**: Routes requests, executes tools, manages workers
+    - **Status**: ACTIVE (running)
+
+    ## Current Implementation State
+
+    ### ✅ Fully Implemented
+    1. **Orchestrator** - Routing requests to tools
+    2. **Queue Workers** - Processing tasks from Redis
+    3. **Documentation Master** - Sandfly docs query
+    4. **MoE Router** - Keyword-based routing logic (in local MCP server)
+
+    ### ⚠️ Partially Implemented
+    1. **Master Agents** - Defined in code but not actively processing
+    2. **Security Master** - Pod exists but only placeholder
+    3. **Worker Spawning** - Tool exists but workers not spawned dynamically
+
+    ### ❌ Not Yet Implemented
+    1. **Development Master** - No pod deployed
+    2. **Infrastructure Master** - No pod deployed
+    3. **Inventory Master** - No pod deployed
+    4. **CI/CD Master** - No pod deployed
+    5. **Master-to-Master Coordination** - Not yet active
+    6. **Worker Swarms** - Defined but not spawning
+
+    ## Routing Examples
+
+    ### Example 1: Network Query
+    **Input**: "Show me all UniFi devices and their health status"
+
+    **Analysis**:
+    - Keywords matched: "unifi", "device"
+    - Route: unifi (Tier 1)
+    - Score: 200 (100 + 100)
+    - Confidence: 1.0 (100%)
+    - Tool: cortex_query
+    - Client: unifi
+
+    **Action**: FORCE cortex_query with client="unifi"
+
+    ### Example 2: Security Alert
+    **Input**: "Check if Sandfly has any security alerts"
+
+    **Analysis**:
+    - Keywords matched: "sandfly", "security", "alert"
+    - Route: sandfly (Tier 1)
+    - Score: 300 (100 + 100 + 100)
+    - Confidence: 1.0 (100%)
+    - Tool: cortex_query
+    - Client: sandfly
+
+    **Action**: FORCE cortex_query with client="sandfly"
+
+    ### Example 3: General Status
+    **Input**: "How's the system doing?"
+
+    **Analysis**:
+    - Keywords matched: None strong
+    - Route: No clear match
+    - Confidence: 0
+    - Tool: null
+    - Client: null
+
+    **Action**: Let Claude decide (likely uses cortex_get_status or get_infrastructure_summary)
+
+    ### Example 4: VM Management
+    **Input**: "Create a new VM on Proxmox for testing"
+
+    **Analysis**:
+    - Keywords matched: "create vm", "proxmox"
+    - Route: infrastructure_manage (Tier 2)
+    - Score: 190 (90 + 100)
+    - Confidence: 1.0 (100%)
+    - Tool: cortex_manage_infrastructure
+    - Client: proxmox
+
+    **Action**: FORCE cortex_manage_infrastructure with target_system="proxmox"
+
+    ## Integration with Chat Interface
+
+    The MoE routing happens in two places:
+
+    ### 1. Local MCP Server (cortex-mcp-server)
+    - File: src/moe-router.js
+    - Used when connecting via official Claude app or Claude Code
+    - Routes queries before they reach orchestrator
+    - Provides routing hints to Claude
+
+    ### 2. Orchestrator (k8s)
+    - No explicit MoE router file
+    - Claude API makes routing decisions
+    - Has knowledge of all 17 tools
+    - Can choose tools intelligently based on context
+
+    ## Routing Statistics
+
+    ```
+    Total Routes: 10
+    Tiers: 6
+    Routes by Tier:
+      Tier 1: 4 routes (unifi, proxmox, sandfly, kubernetes)
+      Tier 2: 1 route (infrastructure_manage)
+      Tier 3: 1 route (worker_spawn)
+      Tier 4: 1 route (master_coordinate)
+      Tier 5: 1 route (project_build)
+      Tier 6: 2 routes (system_control, system_status)
+    ```
+
+    ## Token Budgets
+
+    **Master Agents** (from local coordination files):
+    - Coordinator: 50,000 tokens
+    - Development Master: 30,000 tokens
+    - Security Master: 30,000 tokens (35,000 in k8s pod env)
+    - Inventory Master: 20,000 tokens
+    - CI/CD Master: 20,000 tokens
+
+    **Workers** (estimated):
+    - Implementation: 8,000 tokens
+    - Fix: 5,000 tokens
+    - Test: 5,000 tokens
+    - Scan: 8,000 tokens
+    - Security-fix: 6,000 tokens
+    - Documentation: 5,000 tokens
+    - Analysis: 6,000 tokens
+
+    **Daily Global Limit**: 270,000 tokens (from coordination/token-budget.json)
+
+    ## Future Enhancements
+
+    ### Needed for Full MoE Implementation
+    1. **Deploy Master Agents** - Actually run master pods with agent logic
+    2. **Master Coordination Protocol** - Enable master-to-master communication
+    3. **Dynamic Worker Spawning** - Implement cortex_spawn_workers functionality
+    4. **Routing Learning** - Track routing decisions and outcomes
+    5. **Confidence Tuning** - Adjust keyword weights based on success rates
+    6. **Multi-Master Tasks** - Tasks requiring multiple masters
+    7. **Task Dependencies** - Chain tasks across masters
+    8. **Master Capacity Management** - Track token budgets and availability
+
+    ### Optimization Opportunities
+    1. **Semantic Routing** - Move beyond keyword matching to embeddings
+    2. **Context-Aware Routing** - Consider conversation history
+    3. **Load Balancing** - Distribute work across multiple masters
+    4. **Priority Escalation** - Auto-escalate tasks based on wait time
+    5. **Routing Metrics** - Track success/failure by route
+
+    ## Testing MoE Routing
+
+    ### Via Local MCP Server
+    ```bash
+    cd /Users/ryandahlberg/Projects/cortex/cortex-mcp-server
+    node src/index.js
+    # In Claude Code, use cortex tools
+    ```
+
+    ### Via Chat Interface
+    ```
+    User: "Show UniFi device status"
+    → Claude receives all 17 tools
+    → Claude selects: unifi_get_device_health
+    → Result returned
+    ```
+
+    ### Test Routing Logic Directly
+    ```javascript
+    const { routeQuery } = require('./src/moe-router.js');
+
+    const result = routeQuery("Check Sandfly for security alerts");
+    console.log(result);
+    // Output: { tool: 'cortex_query', client: 'sandfly', confidence: 1.0, ... }
+    ```
+
+    ## Key Insights
+
+    1. **MoE is conceptual but partially implemented**
+       - Routing logic exists in local MCP server
+       - Master definitions exist in orchestrator
+       - But masters not actively running as agents
+
+    2. **Current routing is tool-based, not master-based**
+       - Orchestrator exposes 17 tools
+       - Claude selects appropriate tool
+       - No master-to-master delegation yet
+
+    3. **Documentation Master is the exception**
+       - Fully running and integrated
+       - Accessed via sandfly_query_docs tool
+       - Shows the pattern for other masters
+
+    4. **Worker pattern is simpler**
+       - Queue workers process tasks
+       - Not specialized agents
+       - Generic Claude API calls
+
+    5. **Future is clear**
+       - Master agents designed
+       - Token budgets allocated
+       - Coordination protocol needed
+
+    ## Related Documentation
+
+    - cortex-workflows.yaml - How requests flow through system
+    - cortex-tools-catalog.yaml - All 17 available tools
+    - llm-d-architecture.yaml - LLM daemon (orchestrator) architecture
+    - cortex-task-processing.yaml - Task queue and worker processing
+kind: ConfigMap
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"moe-routing.md":"# Cortex MoE (Mixture of Experts) Routing Architecture\n\n**Discovered**: 2026-01-05\n**Sources**: Local MCP server code + k8s cluster examination\n\n## What is MoE Routing?\n\nMoE (Mixture of Experts) is an intelligent routing system that:\n1. Analyzes incoming queries using keyword matching\n2. Scores potential routes based on confidence\n3. Selects the best tool/client/master for the task\n4. Routes work to specialized agents (experts)\n\n## Architecture Overview\n\n```\nUser Query\n     ↓\nMoE Router analyzes keywords\n     ↓\nConfidence scoring (0-100%)\n     ↓\nIf confidence \u003e= 100%: FORCE tool selection\nIf confidence \u003e= 50%: HINT to Claude which tool to use\nIf confidence \u003c 50%: Let Claude decide\n     ↓\nSelected Expert executes task\n```\n\n## 6-Tier Routing System\n\n### Tier 1: Infrastructure Query (cortex_query)\n**Priority**: 100\n**Purpose**: Direct queries to infrastructure clients\n\n**Routes**:\n1. **unifi** - UniFi network management\n   - Keywords: unifi, network, wifi, wireless, ssid, access point, ap, client, device connected\n   - Client: unifi\n   - Use case: \"Show me UniFi device health\"\n\n2. **proxmox** - Proxmox virtualization\n   - Keywords: proxmox, vm, virtual machine, container, lxc, pve, hypervisor, node resource\n   - Client: proxmox\n   - Use case: \"List all VMs on Proxmox\"\n\n3. **sandfly** - Sandfly security monitoring\n   - Keywords: sandfly, security, alert, vulnerability, threat, intrusion, rootkit, malware, forensic, security scan\n   - Client: sandfly\n   - Use case: \"Check Sandfly alerts\"\n\n4. **kubernetes** - Kubernetes cluster\n   - Keywords: k8s, kubernetes, pod, deployment, service, namespace, kubectl, container, cluster\n   - Client: k8s\n   - Use case: \"Show pods in cortex namespace\"\n\n### Tier 2: Infrastructure Management (cortex_manage_infrastructure)\n**Priority**: 90\n**Purpose**: Modify/manage infrastructure\n\n**Routes**:\n1. **infrastructure_manage** - Infrastructure operations\n   - Keywords: create vm, delete vm, manage container, scale deployment, create pod\n   - Use case: \"Scale cortex-orchestrator to 3 replicas\"\n\n### Tier 3: Worker Swarms (cortex_spawn_workers)\n**Priority**: 95\n**Purpose**: Spawn parallel workers for large tasks\n\n**Routes**:\n1. **worker_spawn** - Worker orchestration\n   - Keywords: spawn worker, create worker, worker swarm, parallel workers, worker pool\n   - Use case: \"Spawn 10 implementation workers\"\n\n### Tier 4: Master Coordination (cortex_coordinate_masters)\n**Priority**: 95\n**Purpose**: Route tasks to specialized master agents\n\n**Routes**:\n1. **master_coordinate** - Master agent routing\n   - Keywords: coordinate master, route task, master agent, handoff, delegate task\n   - Use case: \"Route this security task to the security master\"\n\n### Tier 5: Project Builds (cortex_build_project)\n**Priority**: 85\n**Purpose**: Large-scale project building\n\n**Routes**:\n1. **project_build** - Project construction\n   - Keywords: build project, create microservice, build application, full build, project\n   - Use case: \"Build 50 REST API microservices\"\n\n### Tier 6: Control \u0026 Monitoring\n**Priority**: 80-100\n**Purpose**: System control and status\n\n**Routes**:\n1. **system_control** (cortex_control) - Priority: 100\n   - Keywords: pause, resume, cancel, stop operation, abort\n   - Use case: \"Pause all workers\"\n\n2. **system_status** (cortex_get_status) - Priority: 80\n   - Keywords: status, health, metrics, monitoring, system state\n   - Use case: \"Show system status\"\n\n## Routing Algorithm\n\n### 1. Keyword Matching\n```javascript\nfunction routeQuery(query) {\n  const lowerQuery = query.toLowerCase();\n  const scores = {};\n\n  // Score each route\n  for (const [name, route] of Object.entries(MoE_ROUTES)) {\n    let score = 0;\n    const matchedKeywords = [];\n\n    for (const keyword of route.keywords) {\n      if (lowerQuery.includes(keyword)) {\n        score += route.priority;  // Each keyword adds priority points\n        matchedKeywords.push(keyword);\n      }\n    }\n\n    if (score \u003e 0) {\n      scores[name] = {\n        tool: route.tool,\n        client: route.client,\n        tier: route.tier,\n        score,\n        confidence: Math.min(score / 100, 1.0),\n        matchedKeywords\n      };\n    }\n  }\n\n  // Return highest scoring route\n  return sortByScore(scores)[0];\n}\n```\n\n### 2. Confidence Thresholds\n\n**confidence \u003e= 1.0 (100%)**: FORCE tool selection\n- Multiple keyword matches\n- MCP server forces Claude to use this tool\n- Example: Query contains \"unifi\" + \"network\" → Force cortex_query with unifi client\n\n**confidence \u003e= 0.5 (50-99%)**: HINT to system\n- Some keyword matches\n- Add hint to system message\n- Claude can still choose different tool if needed\n- Example: Query contains \"status\" → Hint: Consider using cortex_get_status\n\n**confidence \u003c 0.5 (0-49%)**: Let Claude decide\n- Weak or no keyword matches\n- Claude uses natural intelligence to select tool\n- Example: \"What's going on?\" → No routing hints\n\n### 3. Multi-Match Handling\n\nWhen multiple routes match:\n1. Calculate score for each route (priority × matched_keywords)\n2. Sort by score descending\n3. Select highest scoring route\n4. Return all matches for analysis\n\n## Master Agents\n\n### Defined Masters (from orchestrator)\n\n#### 1. development-master\n- **Category**: development\n- **Capabilities**: code_analysis, testing, documentation, code_generation\n- **Token Budget**: Unknown\n- **Status**: Defined but not deployed\n\n#### 2. security-master\n- **Category**: security\n- **Capabilities**: vulnerability_scan, compliance_check, threat_analysis\n- **Token Budget**: 35,000 tokens\n- **Status**: Pod exists (cortex-system namespace) but only sleeps\n- **Pod**: security-master-7bb9d59d-s7nck\n\n#### 3. infrastructure-master\n- **Category**: infrastructure\n- **Capabilities**: monitoring, deployment, configuration, optimization\n- **Token Budget**: Unknown\n- **Status**: Defined but not deployed\n\n#### 4. inventory-master\n- **Category**: inventory\n- **Capabilities**: asset_discovery, dependency_mapping, license_management\n- **Token Budget**: Unknown\n- **Status**: Defined but not deployed\n\n#### 5. cicd-master\n- **Category**: cicd\n- **Capabilities**: pipeline_orchestration, build, test_automation, deployment\n- **Token Budget**: Unknown\n- **Status**: Defined but not deployed\n\n#### 6. documentation-master (ACTIVE!)\n- **Category**: documentation\n- **Capabilities**: documentation_query, knowledge_base, contextual_help\n- **Status**: RUNNING in cortex namespace\n- **Pod**: documentation-master-5bf954f65f-dnss7\n- **Port**: 8080\n- **URL**: http://documentation-master.cortex.svc.cluster.local:8080\n- **Integration**: Used by sandfly_query_docs tool\n- **Features**:\n  - Knowledge base at /data/kb\n  - Cache at /data/cache\n  - Periodic crawler jobs (every 24 hours)\n  - Sandfly documentation indexing\n\n### Coordinator\n- **ID**: cortex-orchestrator\n- **Type**: coordinator (not a master)\n- **Role**: Routes requests, executes tools, manages workers\n- **Status**: ACTIVE (running)\n\n## Current Implementation State\n\n### ✅ Fully Implemented\n1. **Orchestrator** - Routing requests to tools\n2. **Queue Workers** - Processing tasks from Redis\n3. **Documentation Master** - Sandfly docs query\n4. **MoE Router** - Keyword-based routing logic (in local MCP server)\n\n### ⚠️ Partially Implemented\n1. **Master Agents** - Defined in code but not actively processing\n2. **Security Master** - Pod exists but only placeholder\n3. **Worker Spawning** - Tool exists but workers not spawned dynamically\n\n### ❌ Not Yet Implemented\n1. **Development Master** - No pod deployed\n2. **Infrastructure Master** - No pod deployed\n3. **Inventory Master** - No pod deployed\n4. **CI/CD Master** - No pod deployed\n5. **Master-to-Master Coordination** - Not yet active\n6. **Worker Swarms** - Defined but not spawning\n\n## Routing Examples\n\n### Example 1: Network Query\n**Input**: \"Show me all UniFi devices and their health status\"\n\n**Analysis**:\n- Keywords matched: \"unifi\", \"device\"\n- Route: unifi (Tier 1)\n- Score: 200 (100 + 100)\n- Confidence: 1.0 (100%)\n- Tool: cortex_query\n- Client: unifi\n\n**Action**: FORCE cortex_query with client=\"unifi\"\n\n### Example 2: Security Alert\n**Input**: \"Check if Sandfly has any security alerts\"\n\n**Analysis**:\n- Keywords matched: \"sandfly\", \"security\", \"alert\"\n- Route: sandfly (Tier 1)\n- Score: 300 (100 + 100 + 100)\n- Confidence: 1.0 (100%)\n- Tool: cortex_query\n- Client: sandfly\n\n**Action**: FORCE cortex_query with client=\"sandfly\"\n\n### Example 3: General Status\n**Input**: \"How's the system doing?\"\n\n**Analysis**:\n- Keywords matched: None strong\n- Route: No clear match\n- Confidence: 0\n- Tool: null\n- Client: null\n\n**Action**: Let Claude decide (likely uses cortex_get_status or get_infrastructure_summary)\n\n### Example 4: VM Management\n**Input**: \"Create a new VM on Proxmox for testing\"\n\n**Analysis**:\n- Keywords matched: \"create vm\", \"proxmox\"\n- Route: infrastructure_manage (Tier 2)\n- Score: 190 (90 + 100)\n- Confidence: 1.0 (100%)\n- Tool: cortex_manage_infrastructure\n- Client: proxmox\n\n**Action**: FORCE cortex_manage_infrastructure with target_system=\"proxmox\"\n\n## Integration with Chat Interface\n\nThe MoE routing happens in two places:\n\n### 1. Local MCP Server (cortex-mcp-server)\n- File: src/moe-router.js\n- Used when connecting via official Claude app or Claude Code\n- Routes queries before they reach orchestrator\n- Provides routing hints to Claude\n\n### 2. Orchestrator (k8s)\n- No explicit MoE router file\n- Claude API makes routing decisions\n- Has knowledge of all 17 tools\n- Can choose tools intelligently based on context\n\n## Routing Statistics\n\n```\nTotal Routes: 10\nTiers: 6\nRoutes by Tier:\n  Tier 1: 4 routes (unifi, proxmox, sandfly, kubernetes)\n  Tier 2: 1 route (infrastructure_manage)\n  Tier 3: 1 route (worker_spawn)\n  Tier 4: 1 route (master_coordinate)\n  Tier 5: 1 route (project_build)\n  Tier 6: 2 routes (system_control, system_status)\n```\n\n## Token Budgets\n\n**Master Agents** (from local coordination files):\n- Coordinator: 50,000 tokens\n- Development Master: 30,000 tokens\n- Security Master: 30,000 tokens (35,000 in k8s pod env)\n- Inventory Master: 20,000 tokens\n- CI/CD Master: 20,000 tokens\n\n**Workers** (estimated):\n- Implementation: 8,000 tokens\n- Fix: 5,000 tokens\n- Test: 5,000 tokens\n- Scan: 8,000 tokens\n- Security-fix: 6,000 tokens\n- Documentation: 5,000 tokens\n- Analysis: 6,000 tokens\n\n**Daily Global Limit**: 270,000 tokens (from coordination/token-budget.json)\n\n## Future Enhancements\n\n### Needed for Full MoE Implementation\n1. **Deploy Master Agents** - Actually run master pods with agent logic\n2. **Master Coordination Protocol** - Enable master-to-master communication\n3. **Dynamic Worker Spawning** - Implement cortex_spawn_workers functionality\n4. **Routing Learning** - Track routing decisions and outcomes\n5. **Confidence Tuning** - Adjust keyword weights based on success rates\n6. **Multi-Master Tasks** - Tasks requiring multiple masters\n7. **Task Dependencies** - Chain tasks across masters\n8. **Master Capacity Management** - Track token budgets and availability\n\n### Optimization Opportunities\n1. **Semantic Routing** - Move beyond keyword matching to embeddings\n2. **Context-Aware Routing** - Consider conversation history\n3. **Load Balancing** - Distribute work across multiple masters\n4. **Priority Escalation** - Auto-escalate tasks based on wait time\n5. **Routing Metrics** - Track success/failure by route\n\n## Testing MoE Routing\n\n### Via Local MCP Server\n```bash\ncd /Users/ryandahlberg/Projects/cortex/cortex-mcp-server\nnode src/index.js\n# In Claude Code, use cortex tools\n```\n\n### Via Chat Interface\n```\nUser: \"Show UniFi device status\"\n→ Claude receives all 17 tools\n→ Claude selects: unifi_get_device_health\n→ Result returned\n```\n\n### Test Routing Logic Directly\n```javascript\nconst { routeQuery } = require('./src/moe-router.js');\n\nconst result = routeQuery(\"Check Sandfly for security alerts\");\nconsole.log(result);\n// Output: { tool: 'cortex_query', client: 'sandfly', confidence: 1.0, ... }\n```\n\n## Key Insights\n\n1. **MoE is conceptual but partially implemented**\n   - Routing logic exists in local MCP server\n   - Master definitions exist in orchestrator\n   - But masters not actively running as agents\n\n2. **Current routing is tool-based, not master-based**\n   - Orchestrator exposes 17 tools\n   - Claude selects appropriate tool\n   - No master-to-master delegation yet\n\n3. **Documentation Master is the exception**\n   - Fully running and integrated\n   - Accessed via sandfly_query_docs tool\n   - Shows the pattern for other masters\n\n4. **Worker pattern is simpler**\n   - Queue workers process tasks\n   - Not specialized agents\n   - Generic Claude API calls\n\n5. **Future is clear**\n   - Master agents designed\n   - Token budgets allocated\n   - Coordination protocol needed\n\n## Related Documentation\n\n- cortex-workflows.yaml - How requests flow through system\n- cortex-tools-catalog.yaml - All 17 available tools\n- llm-d-architecture.yaml - LLM daemon (orchestrator) architecture\n- cortex-task-processing.yaml - Task queue and worker processing\n"},"kind":"ConfigMap","metadata":{"annotations":{},"labels":{"app":"cortex","component":"documentation","type":"moe-routing"},"name":"cortex-moe-routing-doc","namespace":"cortex"}}
+  creationTimestamp: "2026-01-05T11:38:06Z"
+  labels:
+    app: cortex
+    component: documentation
+    type: moe-routing
+  name: cortex-moe-routing-doc
+  namespace: cortex
+  resourceVersion: "66191005"
+  uid: ebccdb10-32a5-4315-826b-86c4dc2a1162
